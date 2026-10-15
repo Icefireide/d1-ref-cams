@@ -186,6 +186,11 @@ export function findDuplicatePlayers(match) {
 // only a hint to poll again; state is never inferred from them.
 export const REPLY_TTL_MS = 5000;
 
+// Viewer URL for one player's camera. Always silent: &noaudio blocks incoming audio tracks and
+// disables audio playback for every stream (VDO.Ninja docs). &muted is kept from the original link.
+export const VDO_ORIGIN = 'https://vdo.ninja';
+export const viewUrl = (id) => `${VDO_ORIGIN}/?view=${encodeURIComponent(id)}&cleanoutput&autoplay&muted&noaudio`;
+
 // Pure: reply data + the tile's stream id -> connected? Anything missing, malformed or for another
 // stream id is "not connected".
 export function replyConnected(data, streamId) {

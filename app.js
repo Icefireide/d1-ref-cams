@@ -1,9 +1,7 @@
-import { decodeHash, computeStatus, ignLabel, replyConnected, liveStatus, playerKey, defaultSelection, parseSelection, REPLY_TTL_MS } from './logic.js';
+import { decodeHash, computeStatus, ignLabel, replyConnected, liveStatus, playerKey, defaultSelection, parseSelection, REPLY_TTL_MS, viewUrl } from './logic.js?v=2';
 
 const app = document.getElementById('app');
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const VDO = 'https://vdo.ninja/';
-const viewUrl = (id) => `${VDO}?view=${encodeURIComponent(id)}&cleanoutput&autoplay&muted&noaudio`;
 
 function showMessage(text) {
   app.innerHTML = `<div class="msg">${esc(text)}</div>`;

@@ -84,6 +84,7 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
   // Any team edit other than Undo itself ends the single-level undo.
   function teamEdited() {
     if (csv.undo) { csv.undo = null; $('csv-done').hidden = true; }
+    if (d1.undo) { d1.undo = null; $('d1-status').textContent = ''; }
   }
 
   function renderTeams() {
@@ -180,7 +181,8 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
     get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
     set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage blocked: the page still works */ } },
   };
-  const d1Status = (t) => { $('d1-status').textContent = t; };
+  // Setting a new status line also drops the Undo control that sat in it.
+  const d1Status = (t) => { d1.undo = null; $('d1-status').textContent = t; };
   const SHEETS = 'https://docs.google.com/spreadsheets/d/';
   function d1Busy(b) {
     d1.busy = b;
@@ -223,18 +225,23 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
       const res = await fetch(`${SHEETS}${id}/export?format=xlsx`);
       if (!res.ok) throw new Error('http');
       const wb = XLSX.read(await res.arrayBuffer(), { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rng = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      const rows = [];
-      for (let r = rng.s.r; r <= rng.e.r; r++) {
-        const row = [];
-        for (let c = rng.s.c; c <= rng.e.c; c++) {
-          const cell = ws[XLSX.utils.encode_cell({ r, c })];
-          row.push({ v: cell ? cell.v : '', link: cell && cell.l && cell.l.Target ? cell.l.Target : '' });
+      // The first worksheet (in order) that yields at least one school.
+      let schools = [];
+      for (const name of wb.SheetNames) {
+        const ws = wb.Sheets[name];
+        const rng = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+        const rows = [];
+        for (let r = rng.s.r; r <= rng.e.r; r++) {
+          const row = [];
+          for (let c = rng.s.c; c <= rng.e.c; c++) {
+            const cell = ws[XLSX.utils.encode_cell({ r, c })];
+            row.push({ v: cell ? cell.v : '', link: cell && cell.l && cell.l.Target ? cell.l.Target : '' });
+          }
+          rows.push(row);
         }
-        rows.push(row);
+        schools = schoolsFromMasterRows(rows);
+        if (schools.length) break;
       }
-      const schools = schoolsFromMasterRows(rows);
       if (!schools.length) { d1Status('No schools with roster links were found in the master sheet.'); return; }
       store.set('rcc-d1-schools', JSON.stringify({ at: Date.now(), schools }));
       d1SetSchools(schools);
@@ -252,7 +259,7 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
     for (const s of picked) {
       let text;
       try {
-        const res = await fetch(`${SHEETS}${s.rosterId}/export?format=csv&gid=0`);
+        const res = await fetch(`${SHEETS}${s.rosterId}/export?format=csv&gid=${/^\d+$/.test(s.gid || '') ? s.gid : '0'}`);
         if (!res.ok) throw new Error('http');
         text = await res.text();
       } catch { notes.push(`${s.school}: couldn't read the roster sheet, skipped`); continue; }
@@ -264,6 +271,7 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
       notes.push(`${s.school} (${players.length - subs} starter${players.length - subs === 1 ? '' : 's'}, ${subs} sub${subs === 1 ? '' : 's'})${players.length < r.players.length ? ` - only the first ${LIMITS.playersPerTeam} kept` : ''}`);
       teams.push({ name: s.school, players: players.map((p) => ({ ign: p.ign, link: '', sub: p.sub })) });
     }
+    const snapshot = { teams: structuredClone(state.teams), game: state.game };
     if (teams.length) {
       state.teams = mergeTeamsKeepingLinks(state.teams, teams);
       state.game = gameLabel(code); $('f-game').value = state.game;
@@ -271,6 +279,14 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
     }
     const n = teams.length;
     d1Status((n ? `Filled ${n} team${n === 1 ? '' : 's'}: ` : 'Nothing filled. ') + notes.join('; '));
+    if (n) {
+      d1.undo = snapshot;
+      $('d1-status').append(' ', h('button', { type: 'button', class: 'btn', text: 'Undo', onclick: () => {
+        const u = d1.undo; if (!u) return;
+        state.teams = u.teams; state.game = u.game; $('f-game').value = u.game;
+        d1Status('Put the teams back.'); renderTeams(); update(true);
+      } }));
+    }
     d1Busy(false); d1RenderSchools();
   }
   $('d1-save').addEventListener('click', () => {

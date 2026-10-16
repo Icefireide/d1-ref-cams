@@ -388,7 +388,7 @@ export function rosterFromCsv(text, gameCode) {
 }
 
 // The master sheet as arrays of cells { v, link } (v = the shown text, link = the cell's hyperlink target or empty).
-// -> [{ school, rosterId }] for every row below the header that has a school name and a hyperlink to a Google sheet.
+// -> [{ school, rosterId, gid }] for every row below the header that has a school name and a hyperlink to a Google sheet.
 // The header is the first row with a "School" cell (that column holds the names). The live master has no "School" header,
 // only a "Rosters" one, with the school name in the first column, so a "Rosters" row is the fallback header.
 // The link is taken from the "Rosters" column when it has one, else from the first cell in the row that links to a sheet.
@@ -401,18 +401,22 @@ export function schoolsFromMasterRows(rows) {
   if (hi < 0) return [];
   const sc = re ? list[hi].findIndex((c) => re.test(cellText(c))) : 0;
   const rc = list[hi].findIndex((c) => /^rosters?$/i.test(cellText(c)));
+  // The sheet id and the tab (gid, from the query or the #fragment; '0' when absent) a link points at.
   const idOf = (c) => {
-    const m = c && typeof c.link === 'string' ? /\/spreadsheets\/d\/([A-Za-z0-9_-]+)/.exec(c.link) : null;
-    return m ? m[1] : null;
+    const link = c && typeof c.link === 'string' ? c.link : '';
+    const m = /\/spreadsheets\/d\/([A-Za-z0-9_-]+)/.exec(link);
+    if (!m) return null;
+    const g = /[?&#]gid=(\d+)/.exec(link);
+    return { rosterId: m[1], gid: g ? g[1] : '0' };
   };
   const out = [];
   for (const r of list.slice(hi + 1)) {
     if (!Array.isArray(r)) continue;
     const school = cellText(r[sc]);
     if (!school) continue;
-    let rosterId = rc >= 0 ? idOf(r[rc]) : null;
-    if (!rosterId) for (const c of r) { rosterId = idOf(c); if (rosterId) break; }
-    if (rosterId) out.push({ school, rosterId });
+    let hit = rc >= 0 ? idOf(r[rc]) : null;
+    if (!hit) for (const c of r) { hit = idOf(c); if (hit) break; }
+    if (hit) out.push({ school, rosterId: hit.rosterId, gid: hit.gid });
   }
   return out;
 }

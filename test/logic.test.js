@@ -273,7 +273,7 @@ test('D7 schoolsFromMasterRows: with and without links', () => {
     [c('OtherLink'), c('x'), c('Roster', 'https://example.com/page')],
     [c(''), c('x'), c('Roster', 'https://docs.google.com/spreadsheets/d/idNoSchool789/edit')],
   ];
-  assert.deepEqual(schoolsFromMasterRows(rows), [{ school: 'Maryville', rosterId: 'idMaryville123' }, { school: 'Winthrop', rosterId: 'idWinthrop456' }]);
+  assert.deepEqual(schoolsFromMasterRows(rows), [{ school: 'Maryville', rosterId: 'idMaryville123', gid: '0' }, { school: 'Winthrop', rosterId: 'idWinthrop456', gid: '0' }]);
   assert.deepEqual(schoolsFromMasterRows([[c('Nothing here')]]), []);
   assert.deepEqual(schoolsFromMasterRows([]), []);
 });
@@ -310,5 +310,13 @@ test('D11 schoolsFromMasterRows: no School header uses Rosters header and the fi
     [c('Third'), c('Logo', 'https://docs.google.com/spreadsheets/d/idElsewhere999/edit'), c('Roster')],
   ];
   assert.deepEqual(schoolsFromMasterRows(rows), [
-    { school: 'Maryville', rosterId: 'idMaryville123' }, { school: 'Winthrop', rosterId: 'idWinthrop456' }, { school: 'Third', rosterId: 'idElsewhere999' }]);
+    { school: 'Maryville', rosterId: 'idMaryville123', gid: '0' }, { school: 'Winthrop', rosterId: 'idWinthrop456', gid: '0' }, { school: 'Third', rosterId: 'idElsewhere999', gid: '0' }]);
+});
+
+test('D12 schoolsFromMasterRows: gid from the fragment, from the query, or 0', () => {
+  const c = (v, link) => ({ v, link });
+  const u = 'https://docs.google.com/spreadsheets/d/';
+  const rows = [[c('School'), c('Rosters')],
+    [c('A'), c('r', u + 'idAAAAAAAA1/edit#gid=123')], [c('B'), c('r', u + 'idBBBBBBBB2/edit?gid=5&x=1')], [c('C'), c('r', u + 'idCCCCCCCC3/edit')], [c('D'), c('r', u + 'idDDDDDDDD4/edit?usp=sharing#gid=77')]];
+  assert.deepEqual(schoolsFromMasterRows(rows).map((s) => s.gid), ['123', '5', '0', '77']);
 });

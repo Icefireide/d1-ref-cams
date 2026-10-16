@@ -261,7 +261,7 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
       if (!r.players.length) { notes.push(`${s.school}: 0 players for ${gameLabel(code)}, skipped`); continue; }
       const players = r.players.slice(0, LIMITS.playersPerTeam);
       const subs = players.filter((p) => p.sub).length;
-      notes.push(`${s.school} (${players.length - subs} starters, ${subs} subs)${players.length < r.players.length ? ` - only the first ${LIMITS.playersPerTeam} kept` : ''}`);
+      notes.push(`${s.school} (${players.length - subs} starter${players.length - subs === 1 ? '' : 's'}, ${subs} sub${subs === 1 ? '' : 's'})${players.length < r.players.length ? ` - only the first ${LIMITS.playersPerTeam} kept` : ''}`);
       teams.push({ name: s.school, players: players.map((p) => ({ ign: p.ign, link: '', sub: p.sub })) });
     }
     if (teams.length) {

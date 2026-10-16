@@ -11,6 +11,7 @@
   --bg:#f4f5f7;--surface:#ffffff;--text:#14171c;--muted:#5a6270;--border:#d3d8df;
   --ok:#0b7a3b;--ok-bg:#d9f3e3;--bad:#b3001b;--bad-bg:#fde0e4;
   --cam-a:#2b3342;--cam-b:#0f131a;--cam-fg:#c9d1de;--live:#e5233b;--live-fg:#ffffff;
+  --warn:#8a5a00;--warn-bg:#fff1d6;--accent:var(--text);
   color-scheme:light;
 }
 @media (prefers-color-scheme: dark){
@@ -18,6 +19,7 @@
     --bg:#0e1116;--surface:#181c23;--text:#f1f3f6;--muted:#9aa4b2;--border:#2e3541;
     --ok:#4ade80;--ok-bg:#12351f;--bad:#ff7a8a;--bad-bg:#3d1219;
     --cam-a:#2b3342;--cam-b:#0a0d12;--cam-fg:#c9d1de;--live:#e5233b;--live-fg:#ffffff;
+    --warn:#f5b84a;--warn-bg:#3a2a0c;--accent:var(--text);
     color-scheme:dark;
   }
 }
@@ -25,12 +27,14 @@
   --bg:#0e1116;--surface:#181c23;--text:#f1f3f6;--muted:#9aa4b2;--border:#2e3541;
   --ok:#4ade80;--ok-bg:#12351f;--bad:#ff7a8a;--bad-bg:#3d1219;
   --cam-a:#2b3342;--cam-b:#0a0d12;--cam-fg:#c9d1de;--live:#e5233b;--live-fg:#ffffff;
+  --warn:#f5b84a;--warn-bg:#3a2a0c;--accent:var(--text);
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.3}
-.wrap{max-width:1100px;margin:0 auto;padding:10px 16px 16px}
-header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:12px}
+.wrap{max-width:1100px;margin:0 auto;padding-block:10px 16px;padding-left:max(16px, env(safe-area-inset-left,0px));padding-right:max(16px, env(safe-area-inset-right,0px))}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:0}
 h1{margin:0;font-size:22px;font-weight:800}
 .meta{margin-top:2px;color:var(--muted);font-size:14px}
 .total{font-size:28px;font-weight:800;white-space:nowrap}
@@ -72,10 +76,124 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 .ign .tag{vertical-align:2px;margin-left:4px}
 .empty{padding:14px;border:2px dashed var(--border);border-radius:8px;color:var(--muted);font-size:14px;font-weight:600;text-align:center}
 .msg{max-width:560px;margin:80px auto;padding:0 16px;font-size:18px;font-weight:600;text-align:center}
+/* ---- tabs ---- */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:12px}
+.tab{font:inherit;font-size:15px;font-weight:600;color:var(--muted);background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:10px 14px;min-height:42px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.tab[aria-selected=true]{color:var(--text);border-bottom-color:var(--text)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--bad);display:inline-block}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* ---- Set up tab (generic element rules scoped with :where so they never reach the camera view) ---- */
+.layout{display:grid;grid-template-columns:1fr;gap:14px;align-items:start}
+@media (min-width:900px){.layout{grid-template-columns:minmax(0,1fr) 360px}.out{position:sticky;top:env(safe-area-inset-top,0px)}}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;min-width:0}
+:where(#panel-setup) h2{margin:0 0 10px;font-size:18px;font-weight:800}
+:where(#panel-setup) label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:3px}
+:where(#panel-setup) :is(input[type=text],select,textarea){width:100%;font:inherit;font-size:15px;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;min-height:38px}
+:where(#panel-setup) input[type=file]{max-width:100%;font:inherit;font-size:14px}
+:where(#panel-setup) textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;word-break:break-all;resize:vertical}
+:where(#panel-setup) details>summary{cursor:pointer;font-size:18px;font-weight:800;min-height:28px}
+:where(#panel-setup) details[open]>summary{margin-bottom:10px}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.btn{display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:14px;font-weight:600;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 14px;min-height:38px;cursor:pointer;text-decoration:none}
+.btn.primary{background:var(--accent);color:var(--surface);border-color:var(--accent)}
+.btn[disabled],.btn[aria-disabled=true]{opacity:.45;cursor:not-allowed}
+.link{font:inherit;font-size:13px;font-weight:600;color:var(--muted);background:none;border:0;text-decoration:underline;cursor:pointer;padding:6px 4px}
+.note{font-size:13px;color:var(--muted)}
+.drop{margin-top:8px;border:2px dashed var(--border);border-radius:8px;padding:14px;text-align:center;color:var(--muted);font-size:14px;font-weight:600}
+.drop.over{border-color:var(--accent);color:var(--text)}
+.csvbox{margin-top:12px;display:flex;flex-direction:column;gap:10px}
+.schools{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px}
+.schools label{display:flex;align-items:center;gap:10px;margin:0;padding:8px 10px;font-size:15px;font-weight:600;color:var(--text);border-top:1px solid var(--border);cursor:pointer;min-height:40px}
+.schools label:first-child{border-top:0}
+.schools input,.subbox input{width:18px;height:18px;margin:0;flex:none;accent-color:var(--ok)}
+.inline-err{color:var(--bad);background:var(--bad-bg);border-radius:8px;padding:8px 10px;font-size:14px;font-weight:600}
+.banner{margin-bottom:12px}
+.inline-ok{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:14px;color:var(--muted);margin-top:8px}
+.mteams{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+@media (max-width:700px){.mteams{grid-template-columns:1fr}}
+.mteam{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;min-width:0}
+.thead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.thead input{font-weight:800;font-size:16px;min-width:0;flex:1}
+.player{border-top:1px solid var(--border);padding:8px 0;display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px 8px;align-items:center}
+.player .linkin,.player .status{grid-column:1/-1}
+:where(#panel-setup) .subbox{display:flex;align-items:center;gap:6px;margin:0;font-size:14px;color:var(--text);cursor:pointer;min-height:38px}
+.x{width:38px;padding:0;font-size:20px;line-height:1}
+.status{font-size:12.5px;font-weight:600}
+.status.ok{color:var(--ok)}.status.warn{color:var(--warn)}.status.bad{color:var(--bad)}
+.status code{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:600}
+.addrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:8px}
+.summary{font-size:15px;font-weight:800;margin-bottom:10px}
+.list{margin:0 0 10px;padding:8px 10px 8px 26px;border-radius:8px;font-size:13.5px;font-weight:600}
+.list li{margin:2px 0}
+.list.warn{background:var(--warn-bg);color:var(--warn)}
+.list.bad{background:var(--bad-bg);color:var(--bad)}
+.blocked{border:2px dashed var(--bad);color:var(--bad);border-radius:8px;padding:14px;font-size:14px;font-weight:600;text-align:center}
+.btns{display:flex;gap:10px;margin-top:10px}
+.btns .btn{flex:1}
 </style>
 </head>
 <body>
-<div class="wrap" id="app"></div>
-<script type="module" src="app.js?v=2"></script>
+<div class="wrap" id="app">
+<header>
+  <div><h1 id="h-title">Referee Camera Check</h1><div class="meta" id="h-meta"></div></div>
+  <div class="total" id="total" hidden></div>
+</header>
+<div class="tabs" role="tablist" aria-label="Page sections">
+<button type="button" class="tab" role="tab" id="tab-setup" aria-controls="panel-setup" aria-selected="true">Set up</button>
+<button type="button" class="tab" role="tab" id="tab-cams" aria-controls="panel-cams" aria-selected="false" tabindex="-1">Cameras<span class="dot" id="cams-dot" hidden aria-hidden="true"></span><span class="sr" id="cams-sr" hidden>(fix the problems on Set up first)</span></button>
+</div>
+<div role="tabpanel" id="panel-setup" aria-labelledby="tab-setup">
+<div class="inline-err banner" id="setup-banner" role="alert" hidden></div>
+<div class="layout">
+<div class="col">
+<section class="card" aria-label="Match">
+<h2>Match</h2>
+<div class="fields">
+<div><label for="f-title">Title</label><input type="text" id="f-title" maxlength="120" placeholder="Maryville vs Winthrop"></div>
+<div><label for="f-game">Game</label><input type="text" id="f-game" maxlength="120" list="games" autocomplete="off"><datalist id="games"><option value="Valorant"><option value="League of Legends"><option value="Rocket League"></datalist></div>
+<div><label for="f-date">Date</label><input type="text" id="f-date" maxlength="120" placeholder="2026-10-16"></div>
+</div>
+</section>
+<section class="card" aria-label="Roster CSV">
+<details id="csv-details">
+<summary>Start from the roster CSV (optional)</summary>
+<label for="csv-file">Roster file</label>
+<input type="file" id="csv-file" accept=".csv,text/csv">
+<div class="drop" id="drop">Or drop a .csv file here</div>
+<div class="note" style="margin-top:6px">Columns: school, game, starter, IGN, view link</div>
+<div id="csv-msg"></div>
+<div class="csvbox" id="csv-box" hidden>
+<div><label for="csv-game">Game in the sheet</label><select id="csv-game"></select></div>
+<div><label id="schools-label">Schools (up to 4 teams)</label><div class="schools" id="schools" role="group" aria-labelledby="schools-label"></div><div class="note" id="schools-note"></div></div>
+<div><button type="button" class="btn primary" id="csv-use">Use these schools</button></div>
+</div>
+<div id="csv-done" class="inline-ok" hidden></div>
+</details>
+</section>
+<section aria-label="Teams">
+<div class="mteams" id="mteams"></div>
+<div class="addrow"><button type="button" class="btn" id="add-team">Add team</button><span class="note" id="team-note"></span></div>
+</section>
+</div>
+<aside class="card out" aria-label="Referee link">
+<h2>Link for referees</h2>
+<div class="summary" id="summary"></div>
+<ul class="list bad" id="problems" hidden></ul>
+<ul class="list warn" id="warnings" hidden></ul>
+<div id="result"></div>
+<div class="btns"><button type="button" class="btn primary" id="copy">Copy link</button><a class="btn" id="open" target="_blank" rel="noopener">Open</a></div>
+<div class="note" id="copy-note" role="status" style="margin-top:6px"></div>
+</aside>
+</div>
+<footer>The link holds the whole match. Anyone with the link sees the camera ids.</footer>
+</div>
+<div role="tabpanel" id="panel-cams" aria-labelledby="tab-cams" hidden>
+<div class="blocked" id="cams-blocked" hidden>Fix the problems on Set up to see the cameras.</div>
+<div id="cams"></div>
+</div>
+</div>
+<script type="module" src="app.js?v=3"></script>
 </body>
 </html>

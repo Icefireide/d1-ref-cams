@@ -1,11 +1,8 @@
-import { decodeHash, computeStatus, ignLabel, replyConnected, liveStatus, playerKey, defaultSelection, parseSelection, REPLY_TTL_MS, viewUrl } from './logic.js?v=2';
+import { decodeHash, encodeMatch, formFromMatch, computeStatus, ignLabel, replyConnected, liveStatus, playerKey, defaultSelection, parseSelection, REPLY_TTL_MS, viewUrl } from './logic.js?v=3';
+import { initMaker, emptyForm } from './maker.js?v=3';
 
-const app = document.getElementById('app');
+const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-function showMessage(text) {
-  app.innerHTML = `<div class="msg">${esc(text)}</div>`;
-}
 
 // Each match link remembers its own selection. The key is the full hash (no digest, so two links
 // can never share a key).
@@ -19,16 +16,17 @@ function newToken() {
   return 'rcc-' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 }
 
-function start() {
-  const res = decodeHash(location.hash);
-  if (!res.ok) return showMessage(res.message);
-  const match = res.match;
+// The camera check view for one match, built inside container. hashKey is the match's '#m=…' hash
+// (the selection storage key). Returns unmount(), which stops every timer and listener, blanks every
+// iframe and removes the view's DOM.
+export function mountCameras(container, headerTotalEl, match, hashKey) {
   const connected = new Set();
   const recs = new Map(); // stream id -> { connected, repliedAt } from the iframe's own getStreamIDs replies
   const frames = new Map(); // iframe element -> stream id
   const pending = new Map(); // iframe element -> Map(token -> sentAt) of getStreamIDs requests not yet answered
+  let alive = true;
 
-  const KEY = storageKey(location.hash);
+  const KEY = storageKey(hashKey);
   let stored = null;
   try { stored = localStorage.getItem(KEY); } catch { /* storage blocked */ }
   const selected = (stored !== null && parseSelection(stored, match)) || defaultSelection(match);
@@ -43,20 +41,14 @@ function start() {
     }
   };
 
-  document.title = match.title + ' - Referee Camera Check';
-  const meta = [match.game, match.date].filter(Boolean).join(' · ');
-  app.innerHTML = `
-<header>
-  <div><h1>${esc(match.title)}</h1><div class="meta">${esc(meta)}</div></div>
-  <div class="total" id="total"></div>
-</header>
-<div class="teams" id="teams"></div>
+  container.innerHTML = `
+<div class="teams"></div>
 <footer>Camera boxes update live. A player turns green as soon as their camera connects. Use "Choose players" to swap a sub in or out.</footer>`;
-  const teamsEl = document.getElementById('teams');
-  const totalEl = document.getElementById('total');
+  const teamsEl = container.querySelector('.teams');
+  const totalEl = headerTotalEl;
 
   const poll = (iframe) => {
-    if (!frames.has(iframe)) return;
+    if (!alive || !frames.has(iframe)) return;
     const now = Date.now();
     let toks = pending.get(iframe);
     if (!toks) pending.set(iframe, (toks = new Map()));
@@ -151,6 +143,7 @@ function start() {
   const POLL_MS = 2000;
   let lastSig = null;
   const refresh = () => {
+    if (!alive) return;
     const now = Date.now();
     const next = new Set();
     for (const [id, rec] of recs) if (liveStatus(rec, now)) next.add(id);
@@ -166,7 +159,7 @@ function start() {
   // once right after any VDO connection event from that iframe). A reply that stops arriving for
   // 5 s means not connected. Origin and source-window are checked on every message; replies from
   // a removed (unselected) tile's iframe are ignored because it is no longer in `frames`.
-  window.addEventListener('message', (ev) => {
+  const onMessage = (ev) => {
     if (ev.origin !== 'https://vdo.ninja') return;
     let id = null;
     let frame = null;
@@ -185,19 +178,116 @@ function start() {
     } else if (d.action === 'view-connection' || d.action === 'new-view-connection' || d.action === 'end-view-connection') {
       poll(frame);
     }
-  });
+  };
+  window.addEventListener('message', onMessage);
 
   let tick = 0;
-  setInterval(() => {
+  const timer = setInterval(() => {
     if (tick++ % (POLL_MS / 1000) === 0) for (const iframe of frames.keys()) poll(iframe);
     refresh();
   }, 1000);
 
   refresh();
+
+  return function unmount() {
+    if (!alive) return;
+    alive = false;
+    clearInterval(timer);
+    window.removeEventListener('message', onMessage);
+    for (const iframe of container.querySelectorAll('iframe')) iframe.src = 'about:blank';
+    container.textContent = '';
+    frames.clear(); pending.clear(); recs.clear(); connected.clear();
+    for (const s of sections) s.els.clear();
+    totalEl.textContent = '';
+    totalEl.className = 'total';
+  };
 }
 
-// A different match link pasted into the same tab changes only the hash: reload so the page,
-// its iframes and its stored selection all belong to the new match.
-window.addEventListener('hashchange', () => location.reload());
+// ---- page: tabs, load, URL sync, camera view lifecycle ----
+const TABS = ['setup', 'cams'];
+let tabNow = 'setup';
+let current = null; // { match, key } for the match the form makes now, or null while it is blocked
+let view = null; // { key, unmount } of the mounted camera view
 
-start();
+const totalEl = $('total');
+
+function setHeader() {
+  const m = current && current.match;
+  $('h-title').textContent = m ? m.title : 'Referee Camera Check';
+  $('h-meta').textContent = m ? [m.game, m.date].filter(Boolean).join(' · ') : '';
+  document.title = m ? m.title + ' - Referee Camera Check' : 'Referee Camera Check';
+  $('cams-dot').hidden = $('cams-sr').hidden = !!current;
+}
+
+function unmountView() {
+  if (view) { view.unmount(); view = null; }
+}
+
+// Called whenever the Cameras tab is showing or the match changes while it shows.
+function syncCams() {
+  if (tabNow !== 'cams') { totalEl.hidden = true; return; }
+  if (!current) {
+    unmountView();
+    $('cams-blocked').hidden = false;
+    totalEl.hidden = true;
+    return;
+  }
+  $('cams-blocked').hidden = true;
+  if (view && view.key !== current.key) unmountView();
+  if (!view) view = { key: current.key, unmount: mountCameras($('cams'), totalEl, current.match, current.key) };
+  totalEl.hidden = false;
+}
+
+function showTab(name, focus) {
+  tabNow = name;
+  for (const t of TABS) {
+    const sel = t === name;
+    $('tab-' + t).setAttribute('aria-selected', String(sel));
+    $('tab-' + t).tabIndex = sel ? 0 : -1;
+    $('panel-' + t).hidden = !sel;
+  }
+  syncCams();
+  if (focus) $('tab-' + name).focus();
+}
+
+for (const t of TABS) {
+  $('tab-' + t).addEventListener('click', () => showTab(t));
+  $('tab-' + t).addEventListener('keydown', (e) => {
+    const i = TABS.indexOf(t);
+    const to = e.key === 'ArrowRight' ? TABS[(i + 1) % TABS.length] : e.key === 'ArrowLeft' ? TABS[(i - 1 + TABS.length) % TABS.length]
+      : e.key === 'Home' ? TABS[0] : e.key === 'End' ? TABS[TABS.length - 1] : null;
+    if (to) { e.preventDefault(); showTab(to, true); }
+  });
+}
+
+const initialHash = location.hash;
+const decoded = initialHash ? decodeHash(initialHash) : null;
+const fromLink = !!(decoded && decoded.ok);
+
+function onUpdate(res, { fromUser }) {
+  if (!fromUser) {
+    // First render. A valid link keeps its own hash as the key, so a link made before this page
+    // existed keeps its saved selection; the URL is only rewritten once the producer edits.
+    current = fromLink ? { match: decoded.match, key: initialHash } : res.match ? { match: res.match, key: '#m=' + encodeMatch(res.match) } : null;
+  } else if (res.match) {
+    const key = '#m=' + encodeMatch(res.match);
+    if (key !== location.hash) history.replaceState(null, '', key);
+    current = { match: res.match, key };
+  } else {
+    current = null; // blocked: the hash stays as it was
+  }
+  if (view && (!current || view.key !== current.key)) unmountView();
+  setHeader();
+  syncCams();
+}
+
+initMaker({
+  form: fromLink ? formFromMatch(decoded.match) : emptyForm(),
+  badHashMessage: initialHash && !fromLink ? decoded.message : '',
+  onUpdate,
+});
+showTab(fromLink ? 'cams' : 'setup');
+
+// A different match link pasted into the same tab changes only the hash: reload so the page,
+// its iframes and its stored selection all belong to the new match. (replaceState never fires this.)
+window.addEventListener('hashchange', () => location.reload());

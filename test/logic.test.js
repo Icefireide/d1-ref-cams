@@ -232,7 +232,7 @@ test('D2 normaliseGame and gameLabel', () => {
 });
 
 test('D3 rosterFromCsv: header on row 2, University variant, game variants, starter casing', () => {
-  const text = ['', ',University,Title,Starter or Sub,Name,Email,IGN',
+  const text = ['Team roster,,,', ',University,Title,Starter or Sub,Name,Email,IGN',
     ',Maryville,League of Legends,Starter,n,e,Ann', ',Maryville,LoL,SUB,n,e,Bob', ',Maryville,lol,sub,n,e,Cy', ',Maryville,Valorant,Starter,n,e,Dee', ',Maryville,Rocket League,starter,n,e,Eve'].join('\n');
   const lol = rosterFromCsv(text, 'LoL');
   assert.equal(lol.error, undefined);

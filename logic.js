@@ -436,3 +436,12 @@ export function mergeTeamsKeepingLinks(oldTeamsForm, newTeams) {
     players: t.players.map((p) => (txt(p.link).trim() === '' && links.has(key(p.ign)) ? { ...p, link: links.get(key(p.ign)) } : { ...p })),
   }));
 }
+
+// The saved schools cache (raw localStorage string) -> its schools, but only when it was made from this master. Otherwise [].
+export function cachedSchoolsFor(raw, masterId) {
+  try {
+    const c = JSON.parse(raw);
+    if (!c || typeof masterId !== 'string' || masterId === '' || c.masterId !== masterId || !Array.isArray(c.schools)) return [];
+    return c.schools.filter((s) => s && typeof s.school === 'string' && typeof s.rosterId === 'string');
+  } catch { return []; }
+}

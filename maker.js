@@ -2,7 +2,7 @@
 import {
   LIMITS, encodeMatch, buildMatchFromForm, cameraIdFromInput, isBlankPlayerRow,
   parseCsv, parseCsvHeader, csvMissingColumns, csvGames, csvSchools, csvTeamsForm,
-  sheetIdFromInput, gameLabel, rosterFromCsv, schoolsFromMasterRows, mergeTeamsKeepingLinks,
+  sheetIdFromInput, cachedSchoolsFor, gameLabel, rosterFromCsv, schoolsFromMasterRows, mergeTeamsKeepingLinks,
 } from './logic.js?v=4';
 
 const $ = (id) => document.getElementById(id);
@@ -179,6 +179,7 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
   const d1 = { schools: [], checked: [], busy: false };
   const store = {
     get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    remove: (k) => { try { localStorage.removeItem(k); } catch { /* storage blocked */ } },
     set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage blocked: the page still works */ } },
   };
   // Setting a new status line also drops the Undo control that sat in it.
@@ -243,7 +244,7 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
         if (schools.length) break;
       }
       if (!schools.length) { d1Status('No schools with roster links were found in the master sheet.'); return; }
-      store.set('rcc-d1-schools', JSON.stringify({ at: Date.now(), schools }));
+      store.set('rcc-d1-schools', JSON.stringify({ masterId: id, at: Date.now(), schools }));
       d1SetSchools(schools);
       d1Status(`Found ${schools.length} schools.`);
     } catch {
@@ -292,16 +293,14 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
   $('d1-save').addEventListener('click', () => {
     const id = sheetIdFromInput($('d1-master').value);
     if (!id) { d1Status("That isn't a Google Sheets link."); return; }
+    if (id !== d1Master()) { d1.schools = []; d1.checked = []; store.remove('rcc-d1-schools'); d1RenderSchools(); }
     store.set('rcc-d1-master', id); $('d1-master').value = ''; d1ShowMaster(); d1Status('');
   });
   $('d1-change').addEventListener('click', () => { $('d1-master-set').hidden = true; $('d1-master-form').hidden = false; $('d1-master').focus(); });
   $('d1-load').addEventListener('click', () => { if (d1.schools.length) { d1RenderSchools(); d1Status(''); } else d1FetchSchools(); });
   $('d1-refresh').addEventListener('click', d1FetchSchools);
   $('d1-fill').addEventListener('click', d1Fill);
-  try {
-    const c = JSON.parse(store.get('rcc-d1-schools'));
-    if (c && Array.isArray(c.schools)) d1.schools = c.schools.filter((s) => s && typeof s.school === 'string' && typeof s.rosterId === 'string');
-  } catch { /* no usable cache */ }
+  d1.schools = cachedSchoolsFor(store.get('rcc-d1-schools'), d1Master());
   d1ShowMaster(); d1RenderSchools();
 
   // ---- wiring ----

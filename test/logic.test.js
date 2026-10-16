@@ -4,6 +4,7 @@ import {
   cameraIdFromInput, cameraLinkForId, buildMatchFromForm, formFromMatch, decodeHash, encodeMatch, LIMITS,
   parseCsv, parseCsvHeader, csvSchools, csvGames, csvTeamsForm, csvMissingColumns,
   sheetIdFromInput, normaliseGame, gameLabel, rosterFromCsv, schoolsFromMasterRows, mergeTeamsKeepingLinks,
+  cachedSchoolsFor,
 } from '../logic.js';
 
 const P = (ign, link = '', sub = false) => ({ ign, link, sub });
@@ -319,4 +320,14 @@ test('D12 schoolsFromMasterRows: gid from the fragment, from the query, or 0', (
   const rows = [[c('School'), c('Rosters')],
     [c('A'), c('r', u + 'idAAAAAAAA1/edit#gid=123')], [c('B'), c('r', u + 'idBBBBBBBB2/edit?gid=5&x=1')], [c('C'), c('r', u + 'idCCCCCCCC3/edit')], [c('D'), c('r', u + 'idDDDDDDDD4/edit?usp=sharing#gid=77')]];
   assert.deepEqual(schoolsFromMasterRows(rows).map((s) => s.gid), ['123', '5', '0', '77']);
+});
+
+test('D13 cachedSchoolsFor only trusts a cache made from the same master', () => {
+  const raw = JSON.stringify({ masterId: 'm1', at: 1, schools: [{ school: 'A', rosterId: 'r1', gid: '0' }, { school: 5 }] });
+  assert.deepEqual(cachedSchoolsFor(raw, 'm1'), [{ school: 'A', rosterId: 'r1', gid: '0' }]);
+  assert.deepEqual(cachedSchoolsFor(raw, 'm2'), []);
+  assert.deepEqual(cachedSchoolsFor(JSON.stringify({ at: 1, schools: [{ school: 'A', rosterId: 'r1' }] }), 'm1'), []);
+  assert.deepEqual(cachedSchoolsFor(raw, null), []);
+  assert.deepEqual(cachedSchoolsFor('junk', 'm1'), []);
+  assert.deepEqual(cachedSchoolsFor(null, 'm1'), []);
 });

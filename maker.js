@@ -2,7 +2,7 @@
 import {
   LIMITS, encodeMatch, buildMatchFromForm, cameraIdFromInput, isBlankPlayerRow,
   parseCsv, parseCsvHeader, csvMissingColumns, csvGames, csvSchools, csvTeamsForm,
-} from './logic.js?v=3';
+} from './logic.js?v=4';
 
 const $ = (id) => document.getElementById(id);
 // Element builder. Text only ever goes in through textContent / attributes, never innerHTML.

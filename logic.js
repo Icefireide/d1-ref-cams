@@ -334,3 +334,83 @@ export function replyConnected(data, streamId) {
 export function liveStatus(rec, now, ttl = REPLY_TTL_MS) {
   return !!rec && rec.connected === true && typeof rec.repliedAt === 'number' && now - rec.repliedAt <= ttl;
 }
+
+// ---- Load from D1 (the Set up tab): sheet link, game names, roster CSV, master sheet rows ----
+// A Google Sheets link or a bare id -> the id, or null.
+export function sheetIdFromInput(str) {
+  const t = typeof str === 'string' ? str.trim() : '';
+  const m = /\/d\/([A-Za-z0-9_-]+)/.exec(t);
+  if (m) return m[1];
+  return /^[A-Za-z0-9_-]{20,}$/.test(t) ? t : null;
+}
+
+const GAME_CODES = { lol: 'LoL', league: 'LoL', 'league of legends': 'LoL', rl: 'RL', 'rocket league': 'RL', val: 'VAL', valorant: 'VAL' };
+export function normaliseGame(str) {
+  const k = typeof str === 'string' ? str.trim().toLowerCase() : '';
+  return Object.prototype.hasOwnProperty.call(GAME_CODES, k) ? GAME_CODES[k] : null;
+}
+
+const GAME_LABELS = { LoL: 'League of Legends', RL: 'Rocket League', VAL: 'Valorant' };
+export const gameLabel = (code) => (Object.prototype.hasOwnProperty.call(GAME_LABELS, code) ? GAME_LABELS[code] : '');
+
+// A school roster CSV -> { players: [{ ign, sub }] } for one game, starters first then subs, sheet order within each.
+// Only the game, starter and IGN columns are read; every other column is ignored. Blank IGNs are skipped and
+// exact duplicate IGNs dropped. { players: [], error: 'noHeader' } when the header or one of the three columns is missing.
+export function rosterFromCsv(text, gameCode) {
+  const rows = tokenizeCsv(typeof text === 'string' ? text : '');
+  const hi = rows.findIndex((r) => r.some((c) => /^ign$/i.test(c.trim())));
+  if (hi < 0) return { players: [], error: 'noHeader' };
+  const head = rows[hi].map((c) => c.trim());
+  const ic = head.findIndex((c) => /^ign$/i.test(c));
+  const gc = head.findIndex((c) => /^(title|game)$/i.test(c));
+  const sc = head.findIndex((c) => /starter/i.test(c));
+  if (gc < 0 || sc < 0) return { players: [], error: 'noHeader' };
+  const starters = [], subs = [], seen = new Set();
+  for (const r of rows.slice(hi + 1)) {
+    if (normaliseGame(r[gc]) !== gameCode) continue;
+    const ign = (r[ic] ?? '').trim();
+    if (ign === '' || seen.has(ign)) continue;
+    seen.add(ign);
+    const sub = !/^starter$/i.test((r[sc] ?? '').trim());
+    (sub ? subs : starters).push({ ign, sub });
+  }
+  return { players: [...starters, ...subs] };
+}
+
+// The master sheet as arrays of cells { v, link } (v = the shown text, link = the cell's hyperlink target or empty).
+// -> [{ school, rosterId }] for every row below the header (the first row with a "School" cell) that has a school name
+// and a hyperlink to a Google sheet.
+export function schoolsFromMasterRows(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const cellText = (c) => (c && c.v != null ? String(c.v).trim() : '');
+  const hi = list.findIndex((r) => Array.isArray(r) && r.some((c) => /^school$/i.test(cellText(c))));
+  if (hi < 0) return [];
+  const sc = list[hi].findIndex((c) => /^school$/i.test(cellText(c)));
+  const out = [];
+  for (const r of list.slice(hi + 1)) {
+    if (!Array.isArray(r)) continue;
+    const school = cellText(r[sc]);
+    if (!school) continue;
+    for (const c of r) {
+      const m = c && typeof c.link === 'string' ? /\/spreadsheets\/d\/([A-Za-z0-9_-]+)/.exec(c.link) : null;
+      if (m) { out.push({ school, rosterId: m[1] }); break; }
+    }
+  }
+  return out;
+}
+
+// New form teams, with a camera link carried over from the old form when the same IGN (trimmed, any case) had one
+// and the new row has none. Does not change either input.
+export function mergeTeamsKeepingLinks(oldTeamsForm, newTeams) {
+  const key = (s) => txt(s).trim().toLowerCase();
+  const links = new Map();
+  for (const t of Array.isArray(oldTeamsForm) ? oldTeamsForm : []) {
+    for (const p of Array.isArray(t && t.players) ? t.players : []) {
+      if (key(p.ign) !== '' && txt(p.link).trim() !== '' && !links.has(key(p.ign))) links.set(key(p.ign), p.link);
+    }
+  }
+  return newTeams.map((t) => ({
+    ...t,
+    players: t.players.map((p) => (txt(p.link).trim() === '' && links.has(key(p.ign)) ? { ...p, link: links.get(key(p.ign)) } : { ...p })),
+  }));
+}

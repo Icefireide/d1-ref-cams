@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   cameraIdFromInput, cameraLinkForId, buildMatchFromForm, formFromMatch, decodeHash, encodeMatch, LIMITS,
   parseCsv, parseCsvHeader, csvSchools, csvGames, csvTeamsForm, csvMissingColumns,
+  sheetIdFromInput, normaliseGame, gameLabel, rosterFromCsv, schoolsFromMasterRows, mergeTeamsKeepingLinks,
 } from '../logic.js';
 
 const P = (ign, link = '', sub = false) => ({ ign, link, sub });
@@ -200,4 +201,95 @@ test('T10 blank teams are ignored; a named team with no players is a problem', (
   const allBlank = buildMatchFromForm(form([blankTeam, { name: '', players: [] }]));
   assert.deepEqual(kinds(allBlank), ['noPlayers']);
   assert.equal(allBlank.match, null);
+});
+
+// ---- Load from D1 (all data below is made up) ----
+const HEAD = ',School,Title,Starter or Sub,"First name, Last name",Student Email,IGN,Riot ID,Discord ID,Primary Role,Class';
+const line = (school, game, st, ign) => `,${school},${game},${st},"Fa, La",x@example.test,${ign},rid,did,Top,Senior`;
+const csv = (...rows) => ['', HEAD, ...rows].join('\n');
+
+test('D1 sheetIdFromInput: url, bare id, junk', () => {
+  const id = 'AbC123_-AbC123_-AbC123_-AbC';
+  assert.equal(sheetIdFromInput(`https://docs.google.com/spreadsheets/d/${id}/edit#gid=0`), id);
+  assert.equal(sheetIdFromInput(`  ${id}  `), id);
+  assert.equal(sheetIdFromInput('short'), null);
+  assert.equal(sheetIdFromInput('https://example.com/nothing'), null);
+  assert.equal(sheetIdFromInput('has spaces and is long enough to pass'), null);
+  assert.equal(sheetIdFromInput(''), null);
+  assert.equal(sheetIdFromInput(undefined), null);
+});
+
+test('D2 normaliseGame and gameLabel', () => {
+  for (const [s, c] of [['lol', 'LoL'], [' League ', 'LoL'], ['League of Legends', 'LoL'], ['RL', 'RL'], ['rocket league', 'RL'], ['VAL', 'VAL'], ['Valorant', 'VAL']]) assert.equal(normaliseGame(s), c);
+  assert.equal(normaliseGame('chess'), null);
+  assert.equal(normaliseGame(''), null);
+  assert.equal(normaliseGame(null), null);
+  assert.equal(normaliseGame('constructor'), null);
+  assert.equal(gameLabel('LoL'), 'League of Legends');
+  assert.equal(gameLabel('RL'), 'Rocket League');
+  assert.equal(gameLabel('VAL'), 'Valorant');
+  assert.equal(gameLabel('nope'), '');
+});
+
+test('D3 rosterFromCsv: header on row 2, University variant, game variants, starter casing', () => {
+  const text = ['', ',University,Title,Starter or Sub,Name,Email,IGN',
+    ',Maryville,League of Legends,Starter,n,e,Ann', ',Maryville,LoL,SUB,n,e,Bob', ',Maryville,lol,sub,n,e,Cy', ',Maryville,Valorant,Starter,n,e,Dee', ',Maryville,Rocket League,starter,n,e,Eve'].join('\n');
+  const lol = rosterFromCsv(text, 'LoL');
+  assert.equal(lol.error, undefined);
+  assert.deepEqual(lol.players, [{ ign: 'Ann', sub: false }, { ign: 'Bob', sub: true }, { ign: 'Cy', sub: true }]);
+  assert.deepEqual(rosterFromCsv(text, 'VAL').players, [{ ign: 'Dee', sub: false }]);
+  assert.deepEqual(rosterFromCsv(text, 'RL').players, [{ ign: 'Eve', sub: false }]);
+  assert.deepEqual(rosterFromCsv(csv(line('Winthrop', 'VAL', 'STARTER', 'Fay')), 'VAL').players, [{ ign: 'Fay', sub: false }]);
+});
+
+test('D4 rosterFromCsv: blank IGN skipped, duplicate IGN dropped, only ign and sub kept', () => {
+  const r = rosterFromCsv(csv(line('M', 'VAL', 'Starter', 'Ann'), line('M', 'VAL', 'Starter', '  '), line('M', 'VAL', 'SUB', 'Ann'), line('M', 'VAL', 'SUB', 'ann')), 'VAL');
+  assert.deepEqual(r.players, [{ ign: 'Ann', sub: false }, { ign: 'ann', sub: true }]);
+  assert.deepEqual(Object.keys(r.players[0]), ['ign', 'sub']);
+});
+
+test('D5 rosterFromCsv: a missing IGN, game or starter column is noHeader', () => {
+  assert.equal(rosterFromCsv(',School,Title,Starter or Sub\n,M,VAL,Starter', 'VAL').error, 'noHeader');
+  assert.equal(rosterFromCsv('School,Starter,IGN\nM,Starter,Ann', 'VAL').error, 'noHeader');
+  assert.equal(rosterFromCsv('School,Title,IGN\nM,VAL,Ann', 'VAL').error, 'noHeader');
+  assert.equal(rosterFromCsv('', 'VAL').error, 'noHeader');
+  assert.deepEqual(rosterFromCsv('', 'VAL').players, []);
+});
+
+test('D6 rosterFromCsv: starters come before subs, sheet order within each group', () => {
+  const r = rosterFromCsv(csv(line('M', 'RL', 'SUB', 'S1'), line('M', 'RL', 'Starter', 'A1'), line('M', 'RL', 'sub', 'S2'), line('M', 'RL', 'Starter', 'A2')), 'RL');
+  assert.deepEqual(r.players.map((p) => p.ign), ['A1', 'A2', 'S1', 'S2']);
+  assert.deepEqual(r.players.map((p) => p.sub), [false, false, true, true]);
+});
+
+test('D7 schoolsFromMasterRows: with and without links', () => {
+  const c = (v, link) => ({ v, link });
+  const rows = [
+    [c('D1 Member Info')],
+    [c('School'), c('Contact'), c('Rosters')],
+    [c('Maryville'), c('x'), c('Roster', 'https://docs.google.com/spreadsheets/d/idMaryville123/edit')],
+    [c('Winthrop'), c('x'), c('Roster', 'https://docs.google.com/spreadsheets/d/idWinthrop456/edit#gid=0')],
+    [c('NoLink'), c('x'), c('Roster')],
+    [c('OtherLink'), c('x'), c('Roster', 'https://example.com/page')],
+    [c(''), c('x'), c('Roster', 'https://docs.google.com/spreadsheets/d/idNoSchool789/edit')],
+  ];
+  assert.deepEqual(schoolsFromMasterRows(rows), [{ school: 'Maryville', rosterId: 'idMaryville123' }, { school: 'Winthrop', rosterId: 'idWinthrop456' }]);
+  assert.deepEqual(schoolsFromMasterRows([[c('Nothing here')]]), []);
+  assert.deepEqual(schoolsFromMasterRows([]), []);
+});
+
+test('D8 mergeTeamsKeepingLinks keeps the link on a case-insensitive IGN match', () => {
+  const old = [{ name: 'A', players: [P('Ann', 'https://vdo.ninja/?view=ann1'), P('Bob', '')] }, { name: 'B', players: [P('Cy', 'cy1')] }];
+  const nu = [{ name: 'Maryville', players: [P(' ANN '), P('Bob'), P('Cy', 'mine')] }];
+  const out = mergeTeamsKeepingLinks(old, nu);
+  assert.equal(out[0].players[0].link, 'https://vdo.ninja/?view=ann1');
+  assert.equal(out[0].players[1].link, '');
+  assert.equal(out[0].players[2].link, 'mine');
+  assert.equal(nu[0].players[0].link, '');
+});
+
+test('D9 mergeTeamsKeepingLinks drops the link when no IGN matches', () => {
+  const out = mergeTeamsKeepingLinks([{ name: 'A', players: [P('Ann', 'ann1')] }], [{ name: 'W', players: [P('Zed', '', true)] }]);
+  assert.deepEqual(out, [{ name: 'W', players: [{ ign: 'Zed', link: '', sub: true }] }]);
+  assert.deepEqual(mergeTeamsKeepingLinks([], [{ name: 'W', players: [P('Zed')] }]), [{ name: 'W', players: [P('Zed')] }]);
 });

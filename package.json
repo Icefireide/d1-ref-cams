@@ -1,0 +1,1 @@
+{ "name": "d1-ref-cams", "private": true, "type": "module", "scripts": { "test": "node --test test/" } }

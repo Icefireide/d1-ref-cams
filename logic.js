@@ -121,8 +121,9 @@ export function parseSelection(stored, match) {
   }
 }
 
-// ---- CSV -> match JSON (used by make-links.mjs) ----
-export function parseCsv(text) {
+// ---- CSV -> match JSON (used by the Set up tab) ----
+// One CSV tokenizer: returns the non-empty rows as arrays of raw cell strings (header row first).
+function tokenizeCsv(text) {
   const rows = [];
   let row = [], cur = '', q = false;
   text = text.replace(/^\uFEFF/, '');
@@ -143,8 +144,18 @@ export function parseCsv(text) {
   }
   row.push(cur);
   if (row.some((x) => x !== '')) rows.push(row);
-  const [head, ...rest] = rows;
+  return rows;
+}
+
+export function parseCsv(text) {
+  const [head, ...rest] = tokenizeCsv(text);
   return rest.map((r) => Object.fromEntries(head.map((h, i) => [h.trim(), (r[i] ?? '').trim()])));
+}
+
+// The header row's column names (trimmed). Works for a header-only file, where parseCsv returns [].
+export function parseCsvHeader(text) {
+  const [head] = tokenizeCsv(text);
+  return head ? head.map((h) => h.trim()) : [];
 }
 
 export function streamIdFromLink(link) {
@@ -166,7 +177,7 @@ export function csvToMatch(rows, def) {
   return { title: def.title, game: def.game, date: def.date, teams };
 }
 
-// ---- duplicate stream ids (for make-links warnings) ----
+// ---- duplicate stream ids (used by the Set up tab) ----
 // Returns [{ team, ign }] for every player whose stream id appears more than once in the match.
 // Returns [{ team, ign, sub }] for players with no stream id (blank or missing view link).
 export function findNoLinkPlayers(match) {
@@ -177,6 +188,115 @@ export function findDuplicatePlayers(match) {
   const count = new Map();
   for (const t of match.teams) for (const p of t.players) if (p.id !== null) count.set(p.id, (count.get(p.id) || 0) + 1);
   return match.teams.flatMap((t) => t.players.filter((p) => p.id !== null && count.get(p.id) > 1).map((p) => ({ team: t.name, ign: p.ign })));
+}
+
+// ---- the Set up tab: form <-> match (pure; the page only renders what these return) ----
+// form = { title, game, date, teams: [{ name, players: [{ ign, link, sub }] }] }
+// where link is whatever the producer typed or pasted: a VDO.Ninja view link, a bare id, or blank.
+const ID_RE = /^[A-Za-z0-9_.-]+$/;
+
+// Camera link text -> { id, ok }. Blank means "no camera" (ok); anything that does not give a usable id is not ok.
+export function cameraIdFromInput(text) {
+  const t = typeof text === 'string' ? text.trim() : '';
+  if (t === '') return { id: null, ok: true };
+  let id;
+  try { id = t.includes('view=') ? streamIdFromLink(t) : t; } catch { id = ''; }
+  return id !== '' && ID_RE.test(id) ? { id, ok: true } : { id: null, ok: false };
+}
+
+export const cameraLinkForId = (id) => (id === null || id === undefined || id === '' ? '' : 'https://vdo.ninja/?view=' + id);
+
+const txt = (v) => (typeof v === 'string' ? v : '');
+// A row with no IGN, no link and not marked sub is an empty row, not a player.
+export const isBlankPlayerRow = (p) => !p || (txt(p.ign).trim() === '' && txt(p.link).trim() === '' && !p.sub);
+
+// Returns { match, problems, warnings, tooLong }. match is non-null only when there are no problems.
+// problems: [{ kind, team, ign, ti, pi, message, others? }], kinds: noTeams, noPlayers, badLink, duplicate, limits, tooLong.
+// ti/pi are the row's indexes in the form (blank rows included) so the page can mark that row.
+// warnings: findNoLinkPlayers of the match: [{ team, ign, sub }].
+export function buildMatchFromForm(form) {
+  const problems = [];
+  const teams = Array.isArray(form && form.teams) ? form.teams : [];
+  const teamName = (t) => txt(t && t.name).trim() || 'Team';
+  const ignOf = (p) => txt(p.ign).trim();
+  const who = (team, ign) => `${team}: ${ign || 'Player with no IGN'}`;
+  // rows: every non-blank player with its camera id
+  const rows = teams.map((t, ti) => (Array.isArray(t && t.players) ? t.players : [])
+    .map((p, pi) => ({ p, ti, pi }))
+    .filter((r) => !isBlankPlayerRow(r.p))
+    .map((r) => ({ ...r, cam: cameraIdFromInput(txt(r.p.link)) })));
+  if (teams.length === 0) problems.push({ kind: 'noTeams', team: '', ign: '', message: 'Add at least one team' });
+  else if (rows.every((tr) => tr.length === 0)) problems.push({ kind: 'noPlayers', team: '', ign: '', message: 'Add at least one player' });
+  const dropped = new Set(); // rows with a link problem are left out of the limits check below
+  for (const tr of rows) for (const r of tr) {
+    if (!r.cam.ok) {
+      dropped.add(r);
+      problems.push({ kind: 'badLink', team: teamName(teams[r.ti]), ign: ignOf(r.p), ti: r.ti, pi: r.pi, message: `${who(teamName(teams[r.ti]), ignOf(r.p))} has a camera link that is not usable` });
+    }
+  }
+  // Duplicates on the raw ids, keyed by row position so each one maps back to its form row.
+  const keyed = { teams: rows.map((tr, ti) => ({ name: String(ti), players: tr.map((r, k) => ({ ign: String(k), id: r.cam.id })) })) };
+  const dups = findDuplicatePlayers(keyed).map((d) => rows[Number(d.team)][Number(d.ign)]);
+  for (const r of dups) {
+    dropped.add(r);
+    const others = dups.filter((o) => o !== r && o.cam.id === r.cam.id).map((o) => ({ team: teamName(teams[o.ti]), ign: ignOf(o.p) }));
+    problems.push({ kind: 'duplicate', team: teamName(teams[r.ti]), ign: ignOf(r.p), ti: r.ti, pi: r.pi, others, message: `${who(teamName(teams[r.ti]), ignOf(r.p))} shares a camera with another player` });
+  }
+  let match = null;
+  if (teams.length > 0) {
+    const raw = {
+      title: txt(form.title).trim(), game: txt(form.game).trim(), date: txt(form.date).trim(),
+      teams: teams.map((t, ti) => ({
+        name: txt(t && t.name).trim(),
+        players: rows[ti].filter((r) => !dropped.has(r)).map((r) => {
+          const o = { ign: ignOf(r.p), id: r.cam.id || '' };
+          if (r.p.sub === true) o.sub = true;
+          return o;
+        }),
+      })),
+    };
+    match = normalizeMatch(raw);
+    if (!match) {
+      problems.push({ kind: 'limits', team: '', ign: '', message: `Too much in the match: at most ${LIMITS.teams} teams, ${LIMITS.playersPerTeam} players per team, ${LIMITS.ign} characters per IGN and ${LIMITS.text} characters per title, game, date or team name` });
+    }
+  }
+  const warnings = match ? findNoLinkPlayers(match) : [];
+  let tooLong = false;
+  if (match && problems.length === 0 && ('#m=' + encodeMatch(match)).length > LIMITS.hash) {
+    // decodeHash rejects a hash longer than LIMITS.hash, so a longer link would never open
+    tooLong = true;
+    problems.push({ kind: 'tooLong', team: '', ign: '', message: 'Too much data for one link — remove players or shorten names.' });
+  }
+  return { match: problems.length === 0 ? match : null, problems, warnings, tooLong };
+}
+
+// match (normalized) -> form. The inverse of buildMatchFromForm for a valid match.
+export function formFromMatch(match) {
+  return {
+    title: match.title, game: match.game, date: match.date,
+    teams: match.teams.map((t) => ({ name: t.name, players: t.players.map((p) => ({ ign: p.ign, link: cameraLinkForId(p.id), sub: !!p.sub })) })),
+  };
+}
+
+// ---- roster CSV for the Set up tab ----
+export const CSV_COLUMNS = ['school', 'game', 'starter', 'IGN', 'view link'];
+const isPlayerRow = (r) => /^(starter|sub)$/i.test(r.starter);
+const distinct = (list) => { const out = []; for (const v of list) if (v && !out.includes(v)) out.push(v); return out; };
+
+// rowsOrHeader: parseCsv rows (objects) or a header (array of strings from parseCsvHeader).
+export function csvMissingColumns(rowsOrHeader) {
+  const list = Array.isArray(rowsOrHeader) ? rowsOrHeader : [];
+  const have = new Set(list.flatMap((x) => (typeof x === 'string' ? [x] : x && typeof x === 'object' ? Object.keys(x) : [])));
+  return CSV_COLUMNS.filter((c) => !have.has(c));
+}
+
+export const csvGames = (rows) => distinct(rows.map((r) => r.game));
+export const csvSchools = (rows, gameCode) => distinct(rows.filter((r) => r.game === gameCode && isPlayerRow(r)).map((r) => r.school));
+
+// Form teams for the chosen schools (in the given order), from csvToMatch.
+export function csvTeamsForm(rows, gameCode, schools) {
+  const m = csvToMatch(rows, { title: '', game: '', date: '', code: gameCode, teams: schools.map((s) => ({ csvName: s, name: s })) });
+  return m.teams.map((t) => ({ name: t.name, players: t.players.map((p) => ({ ign: p.ign, link: cameraLinkForId(p.id), sub: !!p.sub })) }));
 }
 
 // ---- connection truth from the VDO.Ninja iframe API ----

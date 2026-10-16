@@ -328,6 +328,7 @@ test('D13 cachedSchoolsFor only trusts a cache made from the same master', () =>
   assert.deepEqual(cachedSchoolsFor(raw, 'm2'), []);
   assert.deepEqual(cachedSchoolsFor(JSON.stringify({ at: 1, schools: [{ school: 'A', rosterId: 'r1' }] }), 'm1'), []);
   assert.deepEqual(cachedSchoolsFor(raw, null), []);
+  assert.deepEqual(cachedSchoolsFor(JSON.stringify({ masterId: null, schools: [{ school: 'A', rosterId: 'r1' }] }), null), []);
   assert.deepEqual(cachedSchoolsFor('junk', 'm1'), []);
   assert.deepEqual(cachedSchoolsFor(null, 'm1'), []);
 });

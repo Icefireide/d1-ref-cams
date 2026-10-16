@@ -96,10 +96,11 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
       card.append(head);
       t.players.forEach((p, pi) => {
         const ign = h('input', { type: 'text', maxlength: LIMITS.ign, value: p.ign, placeholder: 'IGN', 'aria-label': 'IGN' });
-        const sub = h('input', { type: 'checkbox' }); sub.checked = !!p.sub;
+        const subName = (v) => `Sub: ${v.trim() || 'player ' + (pi + 1)}`;
+        const sub = h('input', { type: 'checkbox', 'aria-label': subName(p.ign) }); sub.checked = !!p.sub;
         const lnk = h('input', { type: 'text', class: 'linkin', value: p.link, placeholder: 'https://vdo.ninja/?view=… or the id', 'aria-label': 'Camera link', autocomplete: 'off', spellcheck: 'false' });
         const rm = h('button', { type: 'button', class: 'btn x', text: '×', 'aria-label': `Remove player ${p.ign}`.trim(), onclick: () => { t.players.splice(pi, 1); teamEdited(); renderTeams(); update(true); } });
-        ign.addEventListener('input', () => { p.ign = ign.value; rm.setAttribute('aria-label', `Remove player ${ign.value}`.trim()); teamEdited(); update(true); });
+        ign.addEventListener('input', () => { p.ign = ign.value; rm.setAttribute('aria-label', `Remove player ${ign.value}`.trim()); sub.setAttribute('aria-label', subName(ign.value)); teamEdited(); update(true); });
         sub.addEventListener('change', () => { p.sub = sub.checked; teamEdited(); update(true); });
         lnk.addEventListener('input', () => { p.link = lnk.value; teamEdited(); update(true); });
         card.append(h('div', { class: 'player', 'data-t': ti, 'data-p': pi }, ign, h('label', { class: 'subbox' }, sub, 'Sub'), rm, lnk, h('div', { class: 'status' })));

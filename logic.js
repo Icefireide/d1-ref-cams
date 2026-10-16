@@ -211,7 +211,7 @@ const txt = (v) => (typeof v === 'string' ? v : '');
 export const isBlankPlayerRow = (p) => !p || (txt(p.ign).trim() === '' && txt(p.link).trim() === '' && !p.sub);
 
 // Returns { match, problems, warnings, tooLong }. match is non-null only when there are no problems.
-// problems: [{ kind, team, ign, ti, pi, message, others? }], kinds: noTeams, noPlayers, badLink, duplicate, limits, tooLong.
+// problems: [{ kind, team, ign, ti, pi, message, others? }], kinds: noTeams, noPlayers, emptyTeam, badLink, duplicate, limits, tooLong.
 // ti/pi are the row's indexes in the form (blank rows included) so the page can mark that row.
 // warnings: findNoLinkPlayers of the match: [{ team, ign, sub }].
 export function buildMatchFromForm(form) {
@@ -227,6 +227,14 @@ export function buildMatchFromForm(form) {
     .map((r) => ({ ...r, cam: cameraIdFromInput(txt(r.p.link)) })));
   if (teams.length === 0) problems.push({ kind: 'noTeams', team: '', ign: '', message: 'Add at least one team' });
   else if (rows.every((tr) => tr.length === 0)) problems.push({ kind: 'noPlayers', team: '', ign: '', message: 'Add at least one player' });
+  // A team with a blank name and only blank rows is not a team (like a blank player row): it is left out.
+  // A named team with no players is a problem.
+  const kept = teams.map((t, ti) => ti).filter((ti) => !(txt(teams[ti] && teams[ti].name).trim() === '' && rows[ti].length === 0));
+  for (const ti of kept) {
+    if (rows[ti].length === 0) {
+      problems.push({ kind: 'emptyTeam', team: teamName(teams[ti]), ign: '', ti, message: `${teamName(teams[ti])} has no players` });
+    }
+  }
   const dropped = new Set(); // rows with a link problem are left out of the limits check below
   for (const tr of rows) for (const r of tr) {
     if (!r.cam.ok) {
@@ -243,11 +251,11 @@ export function buildMatchFromForm(form) {
     problems.push({ kind: 'duplicate', team: teamName(teams[r.ti]), ign: ignOf(r.p), ti: r.ti, pi: r.pi, others, message: `${who(teamName(teams[r.ti]), ignOf(r.p))} shares a camera with another player` });
   }
   let match = null;
-  if (teams.length > 0) {
+  if (kept.length > 0) {
     const raw = {
       title: txt(form.title).trim(), game: txt(form.game).trim(), date: txt(form.date).trim(),
-      teams: teams.map((t, ti) => ({
-        name: txt(t && t.name).trim(),
+      teams: kept.map((ti) => ({
+        name: txt(teams[ti].name).trim(),
         players: rows[ti].filter((r) => !dropped.has(r)).map((r) => {
           const o = { ign: ignOf(r.p), id: r.cam.id || '' };
           if (r.p.sub === true) o.sub = true;

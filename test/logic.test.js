@@ -185,3 +185,19 @@ test('a link built by a820e31 still decodes', () => {
     ],
   });
 });
+
+test('T10 blank teams are ignored; a named team with no players is a problem', () => {
+  const mv = { name: 'Maryville', players: [P('RENZ', 'mv_renz')] };
+  const blankTeam = { name: '  ', players: [P('', '')] };
+  const r = buildMatchFromForm(form([mv, blankTeam, { name: '', players: [] }]));
+  assert.deepEqual(r.problems, []);
+  assert.equal(r.match.teams.length, 1, 'blank teams left out of the link');
+  assert.equal(r.match.teams[0].name, 'Maryville');
+  const named = buildMatchFromForm(form([mv, { name: 'Winthrop', players: [P('', '')] }]));
+  assert.equal(named.match, null);
+  assert.deepEqual(named.problems.map((p) => [p.kind, p.message]), [['emptyTeam', 'Winthrop has no players']]);
+  assert.deepEqual(kinds(buildMatchFromForm(form([]))), ['noTeams']);
+  const allBlank = buildMatchFromForm(form([blankTeam, { name: '', players: [] }]));
+  assert.deepEqual(kinds(allBlank), ['noPlayers']);
+  assert.equal(allBlank.match, null);
+});

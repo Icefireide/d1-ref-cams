@@ -103,6 +103,9 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 .note{font-size:13px;color:var(--muted)}
 .drop{margin-top:8px;border:2px dashed var(--border);border-radius:8px;padding:14px;text-align:center;color:var(--muted);font-size:14px;font-weight:600}
 .drop.over{border-color:var(--accent);color:var(--text)}
+.d1row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.d1row select{width:auto;min-width:90px}
+.d1row input[type=text]{flex:1;min-width:200px;width:auto}
 .csvbox{margin-top:12px;display:flex;flex-direction:column;gap:10px}
 .schools{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px}
 .schools label{display:flex;align-items:center;gap:10px;margin:0;padding:8px 10px;font-size:15px;font-weight:600;color:var(--text);border-top:1px solid var(--border);cursor:pointer;min-height:40px}
@@ -148,6 +151,17 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 <div class="inline-err banner" id="setup-banner" role="alert" hidden></div>
 <div class="layout">
 <div class="col">
+<section class="card" aria-label="Load from D1" id="d1">
+<h2>Load from D1</h2>
+<div id="d1-master-set" class="d1row" hidden><span class="note">Master sheet saved</span><button type="button" class="link" id="d1-change">Change</button></div>
+<div id="d1-master-form"><label for="d1-master">Master sheet link</label><div class="d1row"><input type="text" id="d1-master" autocomplete="off" spellcheck="false" placeholder="https://docs.google.com/spreadsheets/d/…"><button type="button" class="btn" id="d1-save">Save</button></div></div>
+<div class="d1row" style="margin-top:10px"><select id="d1-game" aria-label="Game"><option value="LoL">LoL</option><option value="RL">RL</option><option value="VAL">VAL</option></select><button type="button" class="btn" id="d1-load">Load schools</button><button type="button" class="link" id="d1-refresh" hidden>Refresh schools</button></div>
+<div id="d1-box" class="csvbox" hidden>
+<div><label id="d1-schools-label">Schools (up to 4 teams)</label><div class="schools" id="d1-schools" role="group" aria-labelledby="d1-schools-label"></div><div class="note" id="d1-note"></div></div>
+<div><button type="button" class="btn primary" id="d1-fill">Fill teams</button></div>
+</div>
+<div class="note" id="d1-status" role="status" style="margin-top:8px"></div>
+</section>
 <section class="card" aria-label="Match">
 <h2>Match</h2>
 <div class="fields">
@@ -194,6 +208,7 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 <div id="cams"></div>
 </div>
 </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script type="module" src="app.js?v=4"></script>
 </body>
 </html>

@@ -293,3 +293,22 @@ test('D9 mergeTeamsKeepingLinks drops the link when no IGN matches', () => {
   assert.deepEqual(out, [{ name: 'W', players: [{ ign: 'Zed', link: '', sub: true }] }]);
   assert.deepEqual(mergeTeamsKeepingLinks([], [{ name: 'W', players: [P('Zed')] }]), [{ name: 'W', players: [P('Zed')] }]);
 });
+
+test('D10 rosterFromCsv: game column headed with a game code instead of Title', () => {
+  const text = ['', ',University,RL,Starter or Sub,Name,IGN', ',M,Valorant,Starter,n,Ann', ',M,Valorant,SUB,n,Bob', ',M,Rocket League,Starter,n,Cy'].join('\n');
+  assert.deepEqual(rosterFromCsv(text, 'VAL').players, [{ ign: 'Ann', sub: false }, { ign: 'Bob', sub: true }]);
+  assert.deepEqual(rosterFromCsv(text, 'RL').players, [{ ign: 'Cy', sub: false }]);
+  assert.deepEqual(rosterFromCsv(text, 'LoL').players, []);
+});
+
+test('D11 schoolsFromMasterRows: no School header uses Rosters header and the first column; Rosters column link wins', () => {
+  const c = (v, link) => ({ v, link });
+  const rows = [
+    [c('Column 1'), c('Logo'), c('Rosters')],
+    [c('Maryville'), c('Logo', 'https://docs.google.com/spreadsheets/d/idLogoSheet000/edit'), c('Roster', 'https://docs.google.com/spreadsheets/d/idMaryville123/edit')],
+    [c('Winthrop'), c('Logo'), c('Roster', 'https://docs.google.com/spreadsheets/d/idWinthrop456/edit')],
+    [c('Third'), c('Logo', 'https://docs.google.com/spreadsheets/d/idElsewhere999/edit'), c('Roster')],
+  ];
+  assert.deepEqual(schoolsFromMasterRows(rows), [
+    { school: 'Maryville', rosterId: 'idMaryville123' }, { school: 'Winthrop', rosterId: 'idWinthrop456' }, { school: 'Third', rosterId: 'idElsewhere999' }]);
+});

@@ -2,6 +2,7 @@
 import {
   LIMITS, encodeMatch, buildMatchFromForm, cameraIdFromInput, isBlankPlayerRow,
   parseCsv, parseCsvHeader, csvMissingColumns, csvGames, csvSchools, csvTeamsForm,
+  sheetIdFromInput, gameLabel, rosterFromCsv, schoolsFromMasterRows, mergeTeamsKeepingLinks,
 } from './logic.js?v=4';
 
 const $ = (id) => document.getElementById(id);
@@ -171,6 +172,121 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
       } }));
     d.hidden = false;
   }
+
+  // ---- Load from D1 ----
+  // Only the game, starter and IGN columns of a roster are ever read (rosterFromCsv); nothing else is kept, shown or stored.
+  const d1 = { schools: [], checked: [], busy: false };
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage blocked: the page still works */ } },
+  };
+  const d1Status = (t) => { $('d1-status').textContent = t; };
+  const SHEETS = 'https://docs.google.com/spreadsheets/d/';
+  function d1Busy(b) {
+    d1.busy = b;
+    for (const id of ['d1-save', 'd1-load', 'd1-refresh', 'd1-fill', 'd1-change']) $(id).disabled = b;
+    $('d1-schools').querySelectorAll('input').forEach((cb) => { cb.disabled = b || (!cb.checked && d1.checked.length >= LIMITS.teams); });
+  }
+  function d1Master() { return store.get('rcc-d1-master'); }
+  function d1ShowMaster() {
+    const has = !!d1Master();
+    $('d1-master-set').hidden = !has; $('d1-master-form').hidden = has;
+  }
+  function d1RenderSchools() {
+    const box = $('d1-schools'); box.textContent = '';
+    const full = d1.checked.length >= LIMITS.teams;
+    for (const s of d1.schools) {
+      const cb = h('input', { type: 'checkbox' }); cb.checked = d1.checked.includes(s.school);
+      cb.disabled = full && !cb.checked;
+      cb.addEventListener('change', () => {
+        if (cb.checked) { if (d1.checked.length >= LIMITS.teams) { cb.checked = false; d1Status(`Up to ${LIMITS.teams} schools at a time.`); return; } d1.checked.push(s.school); }
+        else d1.checked = d1.checked.filter((x) => x !== s.school);
+        d1RenderSchools();
+      });
+      box.append(h('label', {}, cb, s.school));
+    }
+    $('d1-note').textContent = full ? `Up to ${LIMITS.teams} schools` : '';
+    $('d1-box').hidden = d1.schools.length === 0;
+    $('d1-refresh').hidden = d1.schools.length === 0;
+    $('d1-fill').disabled = d1.busy || d1.checked.length === 0;
+  }
+  function d1SetSchools(list) {
+    d1.schools = list; d1.checked = d1.checked.filter((n) => list.some((s) => s.school === n));
+    d1RenderSchools();
+  }
+  async function d1FetchSchools() {
+    const id = d1Master();
+    if (!id) { d1Status('Paste the master sheet link first.'); return; }
+    d1Busy(true); d1Status('Loading…');
+    try {
+      if (typeof XLSX === 'undefined') throw new Error('xlsx');
+      const res = await fetch(`${SHEETS}${id}/export?format=xlsx`);
+      if (!res.ok) throw new Error('http');
+      const wb = XLSX.read(await res.arrayBuffer(), { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rng = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      const rows = [];
+      for (let r = rng.s.r; r <= rng.e.r; r++) {
+        const row = [];
+        for (let c = rng.s.c; c <= rng.e.c; c++) {
+          const cell = ws[XLSX.utils.encode_cell({ r, c })];
+          row.push({ v: cell ? cell.v : '', link: cell && cell.l && cell.l.Target ? cell.l.Target : '' });
+        }
+        rows.push(row);
+      }
+      const schools = schoolsFromMasterRows(rows);
+      if (!schools.length) { d1Status('No schools with roster links were found in the master sheet.'); return; }
+      store.set('rcc-d1-schools', JSON.stringify({ at: Date.now(), schools }));
+      d1SetSchools(schools);
+      d1Status(`Found ${schools.length} schools.`);
+    } catch {
+      d1Status("Couldn't read the master sheet. Is it shared as 'Anyone with the link'?");
+    } finally { d1Busy(false); d1RenderSchools(); }
+  }
+  async function d1Fill() {
+    const code = $('d1-game').value;
+    const picked = d1.checked.map((n) => d1.schools.find((s) => s.school === n)).filter(Boolean);
+    if (!picked.length) return;
+    d1Busy(true); d1Status('Loading…');
+    const teams = [], notes = [];
+    for (const s of picked) {
+      let text;
+      try {
+        const res = await fetch(`${SHEETS}${s.rosterId}/export?format=csv&gid=0`);
+        if (!res.ok) throw new Error('http');
+        text = await res.text();
+      } catch { notes.push(`${s.school}: couldn't read the roster sheet, skipped`); continue; }
+      const r = rosterFromCsv(text, code);
+      if (r.error) { notes.push(`${s.school}: roster sheet has no IGN, game and starter columns, skipped`); continue; }
+      if (!r.players.length) { notes.push(`${s.school}: 0 players for ${gameLabel(code)}, skipped`); continue; }
+      const players = r.players.slice(0, LIMITS.playersPerTeam);
+      const subs = players.filter((p) => p.sub).length;
+      notes.push(`${s.school} (${players.length - subs} starters, ${subs} subs)${players.length < r.players.length ? ` - only the first ${LIMITS.playersPerTeam} kept` : ''}`);
+      teams.push({ name: s.school, players: players.map((p) => ({ ign: p.ign, link: '', sub: p.sub })) });
+    }
+    if (teams.length) {
+      state.teams = mergeTeamsKeepingLinks(state.teams, teams);
+      state.game = gameLabel(code); $('f-game').value = state.game;
+      teamEdited(); renderTeams(); update(true);
+    }
+    const n = teams.length;
+    d1Status((n ? `Filled ${n} team${n === 1 ? '' : 's'}: ` : 'Nothing filled. ') + notes.join('; '));
+    d1Busy(false); d1RenderSchools();
+  }
+  $('d1-save').addEventListener('click', () => {
+    const id = sheetIdFromInput($('d1-master').value);
+    if (!id) { d1Status("That isn't a Google Sheets link."); return; }
+    store.set('rcc-d1-master', id); $('d1-master').value = ''; d1ShowMaster(); d1Status('');
+  });
+  $('d1-change').addEventListener('click', () => { $('d1-master-set').hidden = true; $('d1-master-form').hidden = false; $('d1-master').focus(); });
+  $('d1-load').addEventListener('click', () => { if (d1.schools.length) { d1RenderSchools(); d1Status(''); } else d1FetchSchools(); });
+  $('d1-refresh').addEventListener('click', d1FetchSchools);
+  $('d1-fill').addEventListener('click', d1Fill);
+  try {
+    const c = JSON.parse(store.get('rcc-d1-schools'));
+    if (c && Array.isArray(c.schools)) d1.schools = c.schools.filter((s) => s && typeof s.school === 'string' && typeof s.rosterId === 'string');
+  } catch { /* no usable cache */ }
+  d1ShowMaster(); d1RenderSchools();
 
   // ---- wiring ----
   for (const k of ['title', 'game', 'date']) {

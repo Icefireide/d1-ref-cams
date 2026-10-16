@@ -362,8 +362,18 @@ export function rosterFromCsv(text, gameCode) {
   if (hi < 0) return { players: [], error: 'noHeader' };
   const head = rows[hi].map((c) => c.trim());
   const ic = head.findIndex((c) => /^ign$/i.test(c));
-  const gc = head.findIndex((c) => /^(title|game)$/i.test(c));
   const sc = head.findIndex((c) => /starter/i.test(c));
+  // The game column is headed Title or Game. The live sheets head it with a game code instead (e.g. "RL"), so when
+  // neither word is there, it is the column (not IGN, not starter) whose cells below the header are game names most often.
+  let gc = head.findIndex((c) => /^(title|game)$/i.test(c));
+  if (gc < 0) {
+    let best = 0;
+    head.forEach((_, ci) => {
+      if (ci === ic || ci === sc) return;
+      const n = rows.slice(hi + 1).filter((r) => normaliseGame(r[ci]) !== null).length;
+      if (n > best) { best = n; gc = ci; }
+    });
+  }
   if (gc < 0 || sc < 0) return { players: [], error: 'noHeader' };
   const starters = [], subs = [], seen = new Set();
   for (const r of rows.slice(hi + 1)) {
@@ -378,23 +388,31 @@ export function rosterFromCsv(text, gameCode) {
 }
 
 // The master sheet as arrays of cells { v, link } (v = the shown text, link = the cell's hyperlink target or empty).
-// -> [{ school, rosterId }] for every row below the header (the first row with a "School" cell) that has a school name
-// and a hyperlink to a Google sheet.
+// -> [{ school, rosterId }] for every row below the header that has a school name and a hyperlink to a Google sheet.
+// The header is the first row with a "School" cell (that column holds the names). The live master has no "School" header,
+// only a "Rosters" one, with the school name in the first column, so a "Rosters" row is the fallback header.
+// The link is taken from the "Rosters" column when it has one, else from the first cell in the row that links to a sheet.
 export function schoolsFromMasterRows(rows) {
   const list = Array.isArray(rows) ? rows : [];
   const cellText = (c) => (c && c.v != null ? String(c.v).trim() : '');
-  const hi = list.findIndex((r) => Array.isArray(r) && r.some((c) => /^school$/i.test(cellText(c))));
+  const find = (re) => list.findIndex((r) => Array.isArray(r) && r.some((c) => re.test(cellText(c))));
+  let hi = find(/^school$/i), re = /^school$/i;
+  if (hi < 0) { hi = find(/^rosters?$/i); re = null; }
   if (hi < 0) return [];
-  const sc = list[hi].findIndex((c) => /^school$/i.test(cellText(c)));
+  const sc = re ? list[hi].findIndex((c) => re.test(cellText(c))) : 0;
+  const rc = list[hi].findIndex((c) => /^rosters?$/i.test(cellText(c)));
+  const idOf = (c) => {
+    const m = c && typeof c.link === 'string' ? /\/spreadsheets\/d\/([A-Za-z0-9_-]+)/.exec(c.link) : null;
+    return m ? m[1] : null;
+  };
   const out = [];
   for (const r of list.slice(hi + 1)) {
     if (!Array.isArray(r)) continue;
     const school = cellText(r[sc]);
     if (!school) continue;
-    for (const c of r) {
-      const m = c && typeof c.link === 'string' ? /\/spreadsheets\/d\/([A-Za-z0-9_-]+)/.exec(c.link) : null;
-      if (m) { out.push({ school, rosterId: m[1] }); break; }
-    }
+    let rosterId = rc >= 0 ? idOf(r[rc]) : null;
+    if (!rosterId) for (const c of r) { rosterId = idOf(c); if (rosterId) break; }
+    if (rosterId) out.push({ school, rosterId });
   }
   return out;
 }

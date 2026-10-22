@@ -155,11 +155,14 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 <h2>Load from D1</h2>
 <div id="d1-master-set" class="d1row" hidden><span class="note">Master sheet saved</span><button type="button" class="link" id="d1-change">Change</button></div>
 <div id="d1-master-form"><label for="d1-master">Master sheet link</label><div class="d1row"><input type="text" id="d1-master" autocomplete="off" spellcheck="false" placeholder="https://docs.google.com/spreadsheets/d/…"><button type="button" class="btn" id="d1-save">Save</button></div></div>
+<div id="d1-cams-set" class="d1row" style="margin-top:10px" hidden><span class="note">Camera links sheet saved</span><button type="button" class="link" id="d1-cams-change">Change</button></div>
+<div id="d1-cams-form" style="margin-top:10px"><label for="d1-cams">Camera links sheet</label><div class="d1row"><input type="text" id="d1-cams" autocomplete="off" spellcheck="false" placeholder="https://docs.google.com/spreadsheets/d/…"><button type="button" class="btn" id="d1-cams-save">Save</button></div></div>
 <div class="d1row" style="margin-top:10px"><select id="d1-game" aria-label="Game"><option value="LoL">LoL</option><option value="RL">RL</option><option value="VAL">VAL</option></select><button type="button" class="btn" id="d1-load">Load schools</button><button type="button" class="link" id="d1-refresh" hidden>Refresh schools</button></div>
 <div id="d1-box" class="csvbox" hidden>
 <div><label id="d1-schools-label">Schools (up to 4 teams)</label><div class="schools" id="d1-schools" role="group" aria-labelledby="d1-schools-label"></div><div class="note" id="d1-note"></div></div>
 <div><button type="button" class="btn primary" id="d1-fill">Fill teams</button></div>
 </div>
+<div class="d1row" style="margin-top:10px"><button type="button" class="btn" id="d1-fillcams" disabled>Fill cameras</button><span class="note">Adds camera links to players who have none, for the game chosen above.</span></div>
 <div class="note" id="d1-status" role="status" style="margin-top:8px"></div>
 </section>
 <section class="card" aria-label="Match">
@@ -209,6 +212,6 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 </div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=4"></script>
+<script type="module" src="app.js?v=5"></script>
 </body>
 </html>

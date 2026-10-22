@@ -4,7 +4,7 @@ import {
   cameraIdFromInput, cameraLinkForId, buildMatchFromForm, formFromMatch, decodeHash, encodeMatch, LIMITS,
   parseCsv, parseCsvHeader, csvSchools, csvGames, csvTeamsForm, csvMissingColumns,
   sheetIdFromInput, normaliseGame, gameLabel, rosterFromCsv, schoolsFromMasterRows, mergeTeamsKeepingLinks,
-  cachedSchoolsFor,
+  cachedSchoolsFor, camerasFromCsv, camerasFromSheets, schoolKey, sameSchool, applyCameraLinks,
 } from '../logic.js';
 
 const P = (ign, link = '', sub = false) => ({ ign, link, sub });
@@ -331,4 +331,94 @@ test('D13 cachedSchoolsFor only trusts a cache made from the same master', () =>
   assert.deepEqual(cachedSchoolsFor(JSON.stringify({ masterId: null, schools: [{ school: 'A', rosterId: 'r1' }] }), null), []);
   assert.deepEqual(cachedSchoolsFor('junk', 'm1'), []);
   assert.deepEqual(cachedSchoolsFor(null, 'm1'), []);
+});
+
+// ---- camera links sheet ----
+const VIEW = (id) => 'https://vdo.ninja/?view=' + id;
+
+test('C1 camerasFromCsv: header not on row 1, blank rows and preamble ignored', () => {
+  const text = ['Camera sheet,,,', ',,,', 'Game,Starter/Sub,Name,IGN,Camera link', 'VAL,Starter,Some One,Ann,https://vdo.ninja/?push=ann1&webcam', 'VAL,Sub,Other,Bob,bob2'].join('\n');
+  assert.deepEqual(camerasFromCsv(text, { defaultSchool: 'Maryville' }).rows, [
+    { school: 'Maryville', game: 'VAL', ign: 'Ann', id: 'ann1' }, { school: 'Maryville', game: 'VAL', ign: 'Bob', id: 'bob2' }]);
+});
+
+test('C2 camerasFromCsv: each header variant, school and game columns', () => {
+  const ign = ['IGN', 'name', 'Player', 'Gamer Tag', 'In-Game Name'];
+  const link = ['Camera Link', 'VDO Link', 'vdo.ninja link', 'VDO Ninja Link', 'camera url', 'camera', 'cam', 'cam link'];
+  for (const a of ign) assert.deepEqual(camerasFromCsv(`${a},Camera link\nAnn,ann1`).rows, [{ school: '', game: null, ign: 'Ann', id: 'ann1' }], a);
+  for (const b of link) assert.deepEqual(camerasFromCsv(`IGN, ${b} \nAnn,ann1`).rows, [{ school: '', game: null, ign: 'Ann', id: 'ann1' }], b);
+  for (const s of ['School Name', 'school', 'Team', 'team name', 'University']) {
+    assert.equal(camerasFromCsv(`${s},Game,IGN,Camera\nWinthrop,Valorant,Ann,ann1`).rows[0].school, 'Winthrop', s);
+  }
+  for (const g of ['Game', 'Title']) assert.equal(camerasFromCsv(`${g},IGN,Camera\nRocket League,Ann,ann1`).rows[0].game, 'RL', g);
+  assert.equal(camerasFromCsv('IGN,Camera\nAnn,ann1', { defaultGame: 'LoL' }).rows[0].game, 'LoL');
+  assert.equal(camerasFromCsv('School,IGN,Camera\n,Ann,ann1', { defaultSchool: 'Tab' }).rows[0].school, 'Tab');
+});
+
+test('C3 camerasFromCsv: view URL, push URL, bare id, junk, blank; no header', () => {
+  const text = ['IGN,Camera link', 'A,' + VIEW('a1') + '&label=x', 'B,https://vdo.ninja/?push=b2&webcam', 'C,c3', 'D,https://example.com/x', 'E,two words', 'F,', ',f6', 'G,https://vdo.ninja/?push='].join('\n');
+  assert.deepEqual(camerasFromCsv(text).rows.map((r) => [r.ign, r.id]), [['A', 'a1'], ['B', 'b2'], ['C', 'c3']]);
+  assert.deepEqual(camerasFromCsv('Foo,Bar\n1,2'), { rows: [], error: 'noHeader' });
+  assert.deepEqual(camerasFromCsv('IGN\nAnn'), { rows: [], error: 'noHeader' });
+  assert.deepEqual(camerasFromCsv(null), { rows: [], error: 'noHeader' });
+});
+
+test('C4 camerasFromSheets: the tab name is the school; a tab with no header is skipped', () => {
+  const r = camerasFromSheets([{ name: 'Maryville', csv: 'Game,IGN,Camera link\nVAL,Ann,ann1' }, { name: 'Notes', csv: 'hello\nthere' }, { name: 'Winthrop', csv: 'Game,IGN,Camera link\nRL,Bob,bob2' }]);
+  assert.deepEqual(r.rows, [{ school: 'Maryville', game: 'VAL', ign: 'Ann', id: 'ann1' }, { school: 'Winthrop', game: 'RL', ign: 'Bob', id: 'bob2' }]);
+  assert.deepEqual(camerasFromSheets([{ name: 'x', csv: 'nope' }]), { rows: [], error: 'noHeader' });
+  assert.deepEqual(camerasFromSheets(null), { rows: [], error: 'noHeader' });
+});
+
+test('C5 schoolKey and sameSchool', () => {
+  assert.equal(schoolKey('Maryville University'), schoolKey('Maryville'));
+  assert.equal(schoolKey('The University of Winthrop'), schoolKey('winthrop'));
+  assert.equal(schoolKey('St. Mary’s  College'), schoolKey('st mary s'));
+  assert.ok(sameSchool('Ball State', 'Ball State University'));
+  assert.ok(sameSchool('East Tennessee State', 'ETSU'));
+  assert.ok(sameSchool('Keiser University', 'Keiser'));
+  assert.ok(sameSchool('Grand Canyon University', 'Grand Canyon'));
+  assert.ok(sameSchool('Stony Brook University', 'Stony Brook'));
+  assert.ok(!sameSchool('Grand Canyon', 'Grand View'));
+  assert.ok(!sameSchool('Maryville', 'Mary'));
+  assert.ok(!sameSchool('Maryville', 'Winthrop'));
+  assert.ok(!sameSchool('', ''));
+  assert.ok(!sameSchool('University', 'College'));
+});
+
+test('C6 applyCameraLinks fills by school + IGN, filters by game, never overwrites a link', () => {
+  const rows = [
+    { school: 'Maryville', game: 'VAL', ign: 'Ann', id: 'mv_ann' }, { school: 'Maryville', game: 'RL', ign: 'Ann', id: 'mv_ann_rl' },
+    { school: 'Winthrop', game: 'VAL', ign: 'Ann', id: 'wu_ann' }, { school: 'Winthrop', game: 'VAL', ign: 'Bob', id: 'wu_bob' },
+    { school: 'Maryville', game: 'VAL', ign: 'Cy', id: 'mv_cy' }];
+  const teams = [
+    { name: 'Maryville University', players: [P(' ann '), P('Cy', 'typed'), P('Zed'), P('', '')] },
+    { name: 'Winthrop', players: [P('ANN', '', true), P('Bob')] }];
+  const before = JSON.stringify(teams);
+  const r = applyCameraLinks(teams, rows, 'VAL');
+  assert.equal(JSON.stringify(teams), before, 'input unchanged');
+  assert.deepEqual(r.teamsForm[0].players.map((p) => p.link), [VIEW('mv_ann'), 'typed', '', '']);
+  assert.deepEqual(r.teamsForm[1].players, [P('ANN', VIEW('wu_ann'), true), P('Bob', VIEW('wu_bob'))]);
+  assert.equal(r.filled, 3);
+  assert.equal(r.wanted, 4);
+  assert.deepEqual(r.missing, [{ team: 'Maryville University', ign: 'Zed' }]);
+  assert.equal(applyCameraLinks(teams, rows, 'RL').teamsForm[0].players[0].link, VIEW('mv_ann_rl'));
+});
+
+test('C7 applyCameraLinks: rows with no school match on IGN alone, only when that IGN is unique', () => {
+  const rows = [{ school: '', game: 'VAL', ign: 'Ann', id: 'a1' }, { school: '', game: 'VAL', ign: 'Bob', id: 'b1' }, { school: '', game: 'VAL', ign: 'bob', id: 'b2' }, { school: '', game: 'RL', ign: 'Bob', id: 'b3' }];
+  const teams = [{ name: 'Any', players: [P('Ann'), P('Bob')] }];
+  const r = applyCameraLinks(teams, rows, 'VAL');
+  assert.equal(r.teamsForm[0].players[0].link, VIEW('a1'));
+  assert.equal(r.teamsForm[0].players[1].link, '', 'ambiguous IGN is not filled');
+  assert.deepEqual(r.missing, [{ team: 'Any', ign: 'Bob' }]);
+  assert.equal(applyCameraLinks(teams, rows, 'RL').teamsForm[0].players[1].link, VIEW('b3'));
+});
+
+test('C8 applyCameraLinks: a school row never fills another school, and conflicting rows are not guessed', () => {
+  const rows = [{ school: 'Winthrop', game: 'VAL', ign: 'Ann', id: 'w1' }, { school: 'Maryville', game: 'VAL', ign: 'Bob', id: 'm1' }, { school: 'Maryville', game: 'VAL', ign: 'Bob', id: 'm2' }, { school: 'Maryville', game: 'VAL', ign: 'Dee', id: 'd1' }, { school: 'Maryville', game: 'VAL', ign: 'Dee', id: 'd1' }];
+  const r = applyCameraLinks([{ name: 'Maryville', players: [P('Ann'), P('Bob'), P('Dee')] }], rows, 'VAL');
+  assert.deepEqual(r.teamsForm[0].players.map((p) => p.link), ['', '', VIEW('d1')]);
+  assert.deepEqual(r.missing.map((m) => m.ign), ['Ann', 'Bob']);
+  assert.deepEqual(applyCameraLinks(null, null, 'VAL'), { teamsForm: [], filled: 0, wanted: 0, missing: [] });
 });

@@ -3,7 +3,8 @@ import {
   LIMITS, encodeMatch, buildMatchFromForm, cameraIdFromInput, isBlankPlayerRow,
   parseCsv, parseCsvHeader, csvMissingColumns, csvGames, csvSchools, csvTeamsForm,
   sheetIdFromInput, cachedSchoolsFor, gameLabel, rosterFromCsv, schoolsFromMasterRows, mergeTeamsKeepingLinks,
-} from './logic.js?v=4';
+  camerasFromSheets, applyCameraLinks,
+} from './logic.js?v=5';
 
 const $ = (id) => document.getElementById(id);
 // Element builder. Text only ever goes in through textContent / attributes, never innerHTML.
@@ -187,10 +188,35 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
   const SHEETS = 'https://docs.google.com/spreadsheets/d/';
   function d1Busy(b) {
     d1.busy = b;
-    for (const id of ['d1-save', 'd1-load', 'd1-refresh', 'd1-fill', 'd1-change']) $(id).disabled = b;
+    for (const id of ['d1-save', 'd1-load', 'd1-refresh', 'd1-fill', 'd1-change', 'd1-cams-save', 'd1-cams-change']) $(id).disabled = b;
+    $('d1-fillcams').disabled = b || !d1Cams();
     $('d1-schools').querySelectorAll('input').forEach((cb) => { cb.disabled = b || (!cb.checked && d1.checked.length >= LIMITS.teams); });
   }
   function d1Master() { return store.get('rcc-d1-master'); }
+  // The camera links sheet: stored as {id, gid}. The gid is kept from the link the producer pasted, but every worksheet is read
+  // (the live sheet has one tab per school), so the whole workbook is fetched as xlsx.
+  function d1Cams() {
+    try { const c = JSON.parse(store.get('rcc-d1-cams')); return c && typeof c.id === 'string' && c.id ? c : null; } catch { return null; }
+  }
+  function d1ShowCams() {
+    const has = !!d1Cams();
+    $('d1-cams-set').hidden = !has; $('d1-cams-form').hidden = has;
+    $('d1-fillcams').disabled = d1.busy || !has;
+  }
+  // Fetches the camera sheet: every worksheet as CSV, the tab name standing in for a missing school column. Throws on failure.
+  async function d1FetchCams() {
+    const c = d1Cams();
+    if (!c || typeof XLSX === 'undefined') throw new Error('cams');
+    const res = await fetch(`${SHEETS}${c.id}/export?format=xlsx`);
+    if (!res.ok) throw new Error('http');
+    const wb = XLSX.read(await res.arrayBuffer(), { type: 'array' });
+    // A workbook with one tab: that tab's name is not necessarily a school, so it is not used as one.
+    const sheets = wb.SheetNames.map((name) => ({ name: wb.SheetNames.length === 1 ? '' : name, csv: XLSX.utils.sheet_to_csv(wb.Sheets[name]) }));
+    const r = camerasFromSheets(sheets);
+    if (r.error) throw new Error('noHeader');
+    return r.rows;
+  }
+  const camsText = (r) => `Cameras: ${r.filled} of ${r.wanted} filled${r.missing.length ? ` · ${r.missing.length} not in the camera sheet` : ''}`;
   function d1ShowMaster() {
     const has = !!d1Master();
     $('d1-master-set').hidden = !has; $('d1-master-form').hidden = has;
@@ -273,22 +299,46 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
       teams.push({ name: s.school, players: players.map((p) => ({ ign: p.ign, link: '', sub: p.sub })) });
     }
     const snapshot = { teams: structuredClone(state.teams), game: state.game };
-    if (teams.length) {
-      state.teams = mergeTeamsKeepingLinks(state.teams, teams);
+    let merged = teams.length ? mergeTeamsKeepingLinks(state.teams, teams) : null;
+    let camText = '';
+    if (merged && d1Cams()) {
+      try { const r = applyCameraLinks(merged, await d1FetchCams(), code); merged = r.teamsForm; camText = camsText(r); }
+      catch { camText = "Rosters filled; couldn't read the camera sheet."; }
+    }
+    if (merged) {
+      state.teams = merged;
       state.game = gameLabel(code); $('f-game').value = state.game;
       teamEdited(); renderTeams(); update(true);
     }
     const n = teams.length;
-    d1Status((n ? `Filled ${n} team${n === 1 ? '' : 's'}: ` : 'Nothing filled. ') + notes.join('; '));
-    if (n) {
-      d1.undo = snapshot;
-      $('d1-status').append(' ', h('button', { type: 'button', class: 'btn', text: 'Undo', onclick: () => {
-        const u = d1.undo; if (!u) return;
-        state.teams = u.teams; state.game = u.game; $('f-game').value = u.game;
-        d1Status('Put the teams back.'); renderTeams(); update(true);
-      } }));
-    }
+    d1Status((n ? `Filled ${n} team${n === 1 ? '' : 's'}: ` : 'Nothing filled. ') + notes.join('; ') + (camText ? `. ${camText}` : ''));
+    if (n) d1UndoButton(snapshot);
     d1Busy(false); d1RenderSchools();
+  }
+  // Undo for the last fill: puts back the teams and game from before it.
+  function d1UndoButton(snapshot) {
+    d1.undo = snapshot;
+    $('d1-status').append(' ', h('button', { type: 'button', class: 'btn', text: 'Undo', onclick: () => {
+      const u = d1.undo; if (!u) return;
+      state.teams = u.teams; state.game = u.game; $('f-game').value = u.game;
+      d1Status('Put the teams back.'); renderTeams(); update(true);
+    } }));
+  }
+  // Fill cameras: applies the camera sheet to the teams in the form now (which may be hand-made).
+  async function d1FillCams() {
+    if (!d1Cams()) { d1Status('Paste the camera links sheet link first.'); return; }
+    const code = $('d1-game').value;
+    d1Busy(true); d1Status('Loading…');
+    try {
+      let rows;
+      try { rows = await d1FetchCams(); } catch { d1Status("Couldn't read the camera sheet. Is it shared as 'Anyone with the link'?"); return; }
+      const snapshot = { teams: structuredClone(state.teams), game: state.game };
+      const r = applyCameraLinks(state.teams, rows, code);
+      if (r.wanted === 0) { d1Status('Every player already has a camera link, or there are no players yet.'); return; }
+      if (r.filled > 0) { state.teams = r.teamsForm; teamEdited(); renderTeams(); update(true); }
+      d1Status(camsText(r) + '.');
+      if (r.filled > 0) d1UndoButton(snapshot);
+    } finally { d1Busy(false); d1RenderSchools(); }
   }
   $('d1-save').addEventListener('click', () => {
     const id = sheetIdFromInput($('d1-master').value);
@@ -297,11 +347,20 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
     store.set('rcc-d1-master', id); $('d1-master').value = ''; d1ShowMaster(); d1Status('');
   });
   $('d1-change').addEventListener('click', () => { $('d1-master-set').hidden = true; $('d1-master-form').hidden = false; $('d1-master').focus(); });
+  $('d1-cams-save').addEventListener('click', () => {
+    const t = $('d1-cams').value;
+    const id = sheetIdFromInput(t);
+    if (!id) { d1Status("That isn't a Google Sheets link."); return; }
+    const g = /[?&#]gid=(\d+)/.exec(t);
+    store.set('rcc-d1-cams', JSON.stringify({ id, gid: g ? g[1] : '0' })); $('d1-cams').value = ''; d1ShowCams(); d1Status('');
+  });
+  $('d1-cams-change').addEventListener('click', () => { $('d1-cams-set').hidden = true; $('d1-cams-form').hidden = false; $('d1-fillcams').disabled = true; $('d1-cams').focus(); });
+  $('d1-fillcams').addEventListener('click', d1FillCams);
   $('d1-load').addEventListener('click', () => { if (d1.schools.length) { d1RenderSchools(); d1Status(''); } else d1FetchSchools(); });
   $('d1-refresh').addEventListener('click', d1FetchSchools);
   $('d1-fill').addEventListener('click', d1Fill);
   d1.schools = cachedSchoolsFor(store.get('rcc-d1-schools'), d1Master());
-  d1ShowMaster(); d1RenderSchools();
+  d1ShowMaster(); d1ShowCams(); d1RenderSchools();
 
   // ---- wiring ----
   for (const k of ['title', 'game', 'date']) {

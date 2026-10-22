@@ -445,3 +445,114 @@ export function cachedSchoolsFor(raw, masterId) {
     return c.schools.filter((s) => s && typeof s.school === 'string' && typeof s.rosterId === 'string');
   } catch { return []; }
 }
+
+// ---- Camera links sheet (the Set up tab's "Fill cameras") ----
+// The live camera sheet has one worksheet per school (tab named for the school, or an abbreviation of it), no school
+// column, and headers Game, Starter/Sub, Name, IGN, Camera link. Its links are VDO.Ninja *push* links
+// (https://vdo.ninja/?push=<id>&webcam); the viewer id is the same as the push id.
+
+// A camera sheet cell -> { id, ok }. Same as cameraIdFromInput, plus a VDO.Ninja push link gives its push id.
+export function cameraIdFromSheetCell(text) {
+  const t = typeof text === 'string' ? text.trim() : '';
+  const m = /[?&]push=([^&#\s]*)/.exec(t);
+  if (m) {
+    let id = '';
+    try { id = decodeURIComponent(m[1]); } catch { id = ''; }
+    return id !== '' && ID_RE.test(id) ? { id, ok: true } : { id: null, ok: false };
+  }
+  return cameraIdFromInput(t);
+}
+
+const CAM_IGN_HEADS = ['ign', 'name', 'player', 'gamer tag', 'in-game name'];
+const CAM_LINK_HEADS = ['camera link', 'vdo link', 'vdo.ninja link', 'vdo ninja link', 'camera url', 'camera', 'cam', 'cam link'];
+const CAM_SCHOOL_HEADS = ['school name', 'school', 'team', 'team name', 'university'];
+const CAM_GAME_HEADS = ['game', 'title'];
+
+// Camera sheet CSV -> { rows: [{ school, game, ign, id }] } or { rows: [], error: 'noHeader' }.
+// The header is the first row with an IGN column and a link column (headers matched trimmed, any case; for IGN the
+// list is searched in priority order, so an "IGN" column wins over a "Name" column). Rows with a blank IGN or no
+// valid camera id are skipped. game = normaliseGame(cell) or null. school = the cell, else opts.defaultSchool, else ''.
+// opts.defaultSchool: the worksheet's tab name, for sheets with no school column (the live sheet is one tab per school).
+// opts.defaultGame: a game code for rows with no game cell (null otherwise).
+export function camerasFromCsv(text, opts = {}) {
+  const rows = tokenizeCsv(typeof text === 'string' ? text : '');
+  const find = (head, list) => { for (const w of list) { const i = head.indexOf(w); if (i >= 0) return i; } return -1; };
+  let hi = -1, head = [], ic = -1, lc = -1;
+  for (let i = 0; i < rows.length && hi < 0; i++) {
+    const h = rows[i].map((c) => c.trim().toLowerCase());
+    const a = find(h, CAM_IGN_HEADS), b = find(h, CAM_LINK_HEADS);
+    if (a >= 0 && b >= 0 && a !== b) { hi = i; head = h; ic = a; lc = b; }
+  }
+  if (hi < 0) return { rows: [], error: 'noHeader' };
+  const sc = find(head, CAM_SCHOOL_HEADS), gc = find(head, CAM_GAME_HEADS);
+  const defSchool = typeof opts.defaultSchool === 'string' ? opts.defaultSchool.trim() : '';
+  const defGame = opts.defaultGame === undefined ? null : opts.defaultGame;
+  const out = [];
+  for (const r of rows.slice(hi + 1)) {
+    const ign = (r[ic] ?? '').trim();
+    if (ign === '') continue;
+    const cam = cameraIdFromSheetCell(r[lc] ?? '');
+    if (!cam.id) continue;
+    const school = (sc >= 0 ? (r[sc] ?? '').trim() : '') || defSchool;
+    const game = (gc >= 0 ? normaliseGame(r[gc]) : null) || defGame;
+    out.push({ school, game, ign, id: cam.id });
+  }
+  return { rows: out };
+}
+
+// sheets: [{ name, csv }] (one per worksheet) -> every worksheet's rows together, school defaulting to the tab name.
+// A worksheet with no usable header is skipped; { rows: [], error: 'noHeader' } when none had one.
+export function camerasFromSheets(sheets) {
+  const rows = [];
+  let any = false;
+  for (const s of Array.isArray(sheets) ? sheets : []) {
+    const r = camerasFromCsv(s && s.csv, { defaultSchool: s && s.name });
+    if (r.error) continue;
+    any = true; rows.push(...r.rows);
+  }
+  return any ? { rows } : { rows: [], error: 'noHeader' };
+}
+
+// Tab names that abbreviate a school ("ETSU"): lowercase abbreviation -> the key of the full name.
+const SCHOOL_ALIASES = { etsu: 'east tennessee' };
+const SCHOOL_DROP = new Set(['university', 'college', 'state', 'the', 'of']);
+export function schoolKey(name) {
+  const words = txt(name).toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w && !SCHOOL_DROP.has(w));
+  const k = words.join(' ');
+  return Object.prototype.hasOwnProperty.call(SCHOOL_ALIASES, k) ? SCHOOL_ALIASES[k] : k;
+}
+// Equal keys, or one key is a whole-word prefix of the other. Two blank keys never match.
+export function sameSchool(a, b) {
+  const x = schoolKey(a), y = schoolKey(b);
+  if (x === '' || y === '') return false;
+  return x === y || x.startsWith(y + ' ') || y.startsWith(x + ' ');
+}
+
+// Fills blank camera fields of a teams form from camera sheet rows. Does not change the input.
+// A player is matched on school (team name against row school) plus IGN (trimmed, any case). Rows with no school are
+// matched on IGN alone, and only when that IGN occurs exactly once among the no-school rows for the game.
+// A school match whose rows disagree on the id is ambiguous and is not filled. A typed or kept link is never overwritten.
+// Returns { teamsForm, filled, wanted, missing: [{ team, ign }] }: wanted = players with an IGN and no link before the fill.
+export function applyCameraLinks(teamsForm, camRows, gameCode) {
+  const key = (s) => txt(s).trim().toLowerCase();
+  const rows = (Array.isArray(camRows) ? camRows : []).filter((r) => r && (!r.game || r.game === gameCode));
+  const noSchool = rows.filter((r) => !r.school);
+  const out = { teamsForm: [], filled: 0, wanted: 0, missing: [] };
+  for (const t of Array.isArray(teamsForm) ? teamsForm : []) {
+    const players = (Array.isArray(t && t.players) ? t.players : []).map((p) => {
+      if (txt(p.link).trim() !== '' || key(p.ign) === '') return { ...p };
+      out.wanted++;
+      const ids = new Set(rows.filter((r) => r.school && key(r.ign) === key(p.ign) && sameSchool(t.name, r.school)).map((r) => r.id));
+      let id = ids.size === 1 ? [...ids][0] : null;
+      if (ids.size === 0) {
+        const bare = noSchool.filter((r) => key(r.ign) === key(p.ign));
+        if (bare.length === 1) id = bare[0].id;
+      }
+      if (id) { out.filled++; return { ...p, link: cameraLinkForId(id) }; }
+      out.missing.push({ team: txt(t.name), ign: txt(p.ign).trim() });
+      return { ...p };
+    });
+    out.teamsForm.push({ ...t, players });
+  }
+  return out;
+}

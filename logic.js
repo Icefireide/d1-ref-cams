@@ -533,11 +533,14 @@ export function sameSchool(a, b) {
   return x === y || x.startsWith(y + ' ') || y.startsWith(x + ' ') || x.replace(/ /g, '') === y.replace(/ /g, '');
 }
 
-// An IGN with case, accents, spaces, punctuation and a Riot "#TAG" suffix taken out. Used only after an exact (trimmed,
-// any case) match fails, so a roster "Veyron " or "Dancing With The Bl" still finds its camera row.
-export function ignKey(name) {
-  return txt(name).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').split('#')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+// An IGN with case, accents, spaces and punctuation taken out. Without keepTag the Riot "#TAG" suffix is dropped too.
+export function ignKey(name, keepTag = false) {
+  const base = txt(name).normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  const i = base.indexOf('#');
+  const clean = (x) => x.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return keepTag || i < 0 ? clean(base) : clean(base.slice(0, i));
 }
+const hasTag = (name) => ignKey(name, true) !== ignKey(name);
 
 // Fills blank camera fields of a teams form from camera sheet rows. Does not change the input.
 // A player is matched on school (team name against row school) plus IGN (trimmed, any case). Rows with no school are
@@ -551,7 +554,12 @@ export function applyCameraLinks(teamsForm, camRows, gameCode) {
   const out = { teamsForm: [], filled: 0, wanted: 0, missing: [] };
   // Resolve one ign against a candidate row list: exact (trimmed, any case) first, then the tolerant key. null when none or ambiguous.
   const pick = (cands, ign) => {
-    for (const same of [(r) => key(r.ign) === key(ign), (r) => ignKey(r.ign) !== '' && ignKey(r.ign) === ignKey(ign)]) {
+    // exact; then spelling-tolerant with the tag kept; then without the tag, but only when one side has none (two different tags never match)
+    for (const same of [
+      (r) => key(r.ign) === key(ign),
+      (r) => ignKey(r.ign, true) !== '' && ignKey(r.ign, true) === ignKey(ign, true),
+      (r) => ignKey(r.ign) !== '' && ignKey(r.ign) === ignKey(ign) && (!hasTag(r.ign) || !hasTag(ign)),
+    ]) {
       const ids = new Set(cands.filter(same).map((r) => r.id));
       if (ids.size === 1) return [...ids][0];
       if (ids.size > 1) return null;
@@ -564,7 +572,7 @@ export function applyCameraLinks(teamsForm, camRows, gameCode) {
       if (txt(p.link).trim() !== '' || key(p.ign) === '') return { ...p };
       out.wanted++;
       let id = pick(schoolRows, p.ign);
-      if (!id && schoolRows.every((r) => key(r.ign) !== key(p.ign) && ignKey(r.ign) !== ignKey(p.ign))) {
+      if (!id && schoolRows.every((r) => key(r.ign) !== key(p.ign) && ignKey(r.ign, true) !== ignKey(p.ign, true))) {
         const bare = noSchool.filter((r) => key(r.ign) === key(p.ign));
         if (bare.length === 1) id = bare[0].id;
       }
@@ -580,15 +588,19 @@ export function applyCameraLinks(teamsForm, camRows, gameCode) {
 // Every camera-sheet player for each team's school and the game who is not in the team yet (matched by camera id, so a
 // player already there under a different spelling is not added twice) is added with their link, subs marked.
 // Does not change the input. Returns { teamsForm, added: [{ team, ign, sub }], over: [{ team, ign }] } where over = players
-// that did not fit under LIMITS.playersPerTeam.
+// that did not fit under LIMITS.playersPerTeam, and ambiguous = camera-sheet schools that more than one team matches (nothing added from them).
 export function addCameraSheetPlayers(teamsForm, camRows, gameCode) {
   const rows = (Array.isArray(camRows) ? camRows : []).filter((r) => r && r.school && (!r.game || r.game === gameCode));
-  const out = { teamsForm: [], added: [], over: [] };
-  for (const t of Array.isArray(teamsForm) ? teamsForm : []) {
+  const out = { teamsForm: [], added: [], over: [], ambiguous: [] };
+  const list = Array.isArray(teamsForm) ? teamsForm : [];
+  // A camera-sheet school that more than one team matches cannot be assigned to either: nothing is added from it.
+  const shared = (r) => list.filter((t) => sameSchool(t && t.name, r.school)).length > 1;
+  for (const r of rows) if (shared(r) && !out.ambiguous.includes(r.school)) out.ambiguous.push(r.school);
+  for (const t of list) {
     const have = new Set((Array.isArray(t && t.players) ? t.players : []).map((p) => cameraIdFromInput(txt(p.link)).id).filter(Boolean));
     const players = (Array.isArray(t && t.players) ? t.players : []).map((p) => ({ ...p }));
     for (const r of rows) {
-      if (!sameSchool(t && t.name, r.school) || have.has(r.id)) continue;
+      if (!sameSchool(t && t.name, r.school) || shared(r) || have.has(r.id)) continue;
       have.add(r.id);
       if (players.length >= LIMITS.playersPerTeam) { out.over.push({ team: txt(t.name), ign: r.ign }); continue; }
       players.push({ ign: r.ign, link: cameraLinkForId(r.id), sub: r.sub === true });

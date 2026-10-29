@@ -216,7 +216,7 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
     if (r.error) throw new Error('noHeader');
     return r.rows;
   }
-  const camsText = (r, x) => `Cameras: ${r.filled} of ${r.wanted} filled${r.missing.length ? ` · ${r.missing.length} not in the camera sheet (${r.missing.map((m) => `${m.team}: ${m.ign}`).join(', ')})` : ''}${x && x.added.length ? ` · ${x.added.length} more added from the camera sheet (${x.added.map((a) => `${a.team}: ${a.ign}${a.sub ? ' (sub)' : ''}`).join(', ')})` : ''}${x && x.over.length ? ` · ${x.over.length} did not fit under ${LIMITS.playersPerTeam} players (${x.over.map((m) => `${m.team}: ${m.ign}`).join(', ')})` : ''}`;
+  const camsText = (r, x) => `Cameras: ${r.filled} of ${r.wanted} filled${r.missing.length ? ` · ${r.missing.length} not in the camera sheet (${r.missing.map((m) => `${m.team}: ${m.ign}`).join(', ')})` : ''}${x && x.added.length ? ` · ${x.added.length} more added from the camera sheet (${x.added.map((a) => `${a.team}: ${a.ign}${a.sub ? ' (sub)' : ''}`).join(', ')})` : ''}${x && x.ambiguous.length ? ` · more than one team matches ${x.ambiguous.join(', ')}, so nothing was added from it` : ''}${x && x.over.length ? ` · ${x.over.length} did not fit under ${LIMITS.playersPerTeam} players (${x.over.map((m) => `${m.team}: ${m.ign}`).join(', ')})` : ''}`;
   function d1ShowMaster() {
     const has = !!d1Master();
     $('d1-master-set').hidden = !has; $('d1-master-form').hidden = has;

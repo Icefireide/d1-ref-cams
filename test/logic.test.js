@@ -457,3 +457,20 @@ test('C12 camerasFromCsv keeps a blank-IGN row under the Name column', () => {
   const r = camerasFromCsv('Game,Starter/Sub,Name,IGN,Camera link\nLoL,Starter,Jo Bloggs,,https://vdo.ninja/?push=x1&webcam\nLoL,Starter,,,x2');
   assert.deepEqual(r.rows.map((x) => [x.ign, x.id]), [['Jo Bloggs', 'x1']]);
 });
+
+test('C13 applyCameraLinks: two different Riot tags never match; a tagless side still matches', () => {
+  const rows = [{ school: 'W', game: 'LoL', ign: 'Ace#EUW', id: 'eu' }];
+  const t = (ign) => applyCameraLinks([{ name: 'W', players: [P(ign)] }], rows, 'LoL').teamsForm[0].players[0].link;
+  assert.equal(t('Ace#NA1'), '', 'different tag is not the same player');
+  assert.equal(t('ace#euw'), VIEW('eu'));
+  assert.equal(t('Ace'), VIEW('eu'), 'roster without a tag still finds the tagged row');
+  assert.equal(applyCameraLinks([{ name: 'W', players: [P('Ace#EUW')] }], [{ school: 'W', game: 'LoL', ign: 'Ace', id: 'bare' }], 'LoL').teamsForm[0].players[0].link, VIEW('bare'));
+});
+
+test('C14 addCameraSheetPlayers: a school matched by two teams is not added to either and is named', () => {
+  const rows = [{ school: 'Winthrop', game: 'LoL', ign: 'A', id: 'a' }, { school: 'Maryville', game: 'LoL', ign: 'M', id: 'm' }];
+  const x = addCameraSheetPlayers([{ name: 'Winthrop', players: [] }, { name: 'Winthrop University', players: [] }, { name: 'Maryville', players: [] }], rows, 'LoL');
+  assert.deepEqual(x.teamsForm.map((t) => t.players.length), [0, 0, 1]);
+  assert.deepEqual(x.ambiguous, ['Winthrop']);
+  assert.deepEqual(x.added, [{ team: 'Maryville', ign: 'M', sub: false }]);
+});

@@ -4,7 +4,7 @@ import {
   cameraIdFromInput, cameraLinkForId, buildMatchFromForm, formFromMatch, decodeHash, encodeMatch, LIMITS,
   parseCsv, parseCsvHeader, csvSchools, csvGames, csvTeamsForm, csvMissingColumns,
   sheetIdFromInput, normaliseGame, gameLabel, rosterFromCsv, schoolsFromMasterRows, mergeTeamsKeepingLinks,
-  cachedSchoolsFor, camerasFromCsv, camerasFromSheets, schoolKey, sameSchool, applyCameraLinks,
+  cachedSchoolsFor, camerasFromCsv, camerasFromSheets, schoolKey, sameSchool, applyCameraLinks, addCameraSheetPlayers, ignKey,
 } from '../logic.js';
 
 const P = (ign, link = '', sub = false) => ({ ign, link, sub });
@@ -339,7 +339,7 @@ const VIEW = (id) => 'https://vdo.ninja/?view=' + id;
 test('C1 camerasFromCsv: header not on row 1, blank rows and preamble ignored', () => {
   const text = ['Camera sheet,,,', ',,,', 'Game,Starter/Sub,Name,IGN,Camera link', 'VAL,Starter,Some One,Ann,https://vdo.ninja/?push=ann1&webcam', 'VAL,Sub,Other,Bob,bob2'].join('\n');
   assert.deepEqual(camerasFromCsv(text, { defaultSchool: 'Maryville' }).rows, [
-    { school: 'Maryville', game: 'VAL', ign: 'Ann', id: 'ann1' }, { school: 'Maryville', game: 'VAL', ign: 'Bob', id: 'bob2' }]);
+    { school: 'Maryville', game: 'VAL', ign: 'Ann', id: 'ann1' }, { school: 'Maryville', game: 'VAL', ign: 'Bob', id: 'bob2', sub: true }]);
 });
 
 test('C2 camerasFromCsv: each header variant, school and game columns', () => {
@@ -421,4 +421,39 @@ test('C8 applyCameraLinks: a school row never fills another school, and conflict
   assert.deepEqual(r.teamsForm[0].players.map((p) => p.link), ['', '', VIEW('d1')]);
   assert.deepEqual(r.missing.map((m) => m.ign), ['Ann', 'Bob']);
   assert.deepEqual(applyCameraLinks(null, null, 'VAL'), { teamsForm: [], filled: 0, wanted: 0, missing: [] });
+});
+
+test('C9 applyCameraLinks: tolerant IGN (accents, spaces, punctuation, #TAG) and school spelling (Grand View / Grandview)', () => {
+  const rows = [
+    { school: 'Grand View', game: 'LoL', ign: 'Teddy#gap', id: 't1' }, { school: 'Grand View', game: 'LoL', ign: 'Dancing with the bl', id: 'd1' },
+    { school: 'Grand View', game: 'LoL', ign: 'Beatless', id: 'b1' }, { school: 'Grand View', game: 'LoL', ign: 'Ann', id: 'a1' }, { school: 'Grand View', game: 'LoL', ign: 'Ann-', id: 'a2' }];
+  const r = applyCameraLinks([{ name: 'Grandview', players: [P('Teddy'), P('Dancing With The Bl '), P('\u00dfeatless'.replace('\u00df', 'B')), P('Ann'), P('A.n.n')] }], rows, 'LoL');
+  assert.deepEqual(r.teamsForm[0].players.map((p) => p.link), [VIEW('t1'), VIEW('d1'), VIEW('b1'), VIEW('a1'), '']);
+  assert.equal(ignKey('R\u00e9nz #NA1'), 'renz');
+});
+
+test('C10 addCameraSheetPlayers adds every camera-sheet player the team lacks, subs marked, none twice, capped', () => {
+  const rows = [
+    { school: 'Winthrop', game: 'LoL', ign: 'A', id: 'a' }, { school: 'Winthrop', game: 'LoL', ign: 'B', id: 'b', sub: true },
+    { school: 'Winthrop', game: 'RL', ign: 'R', id: 'r' }, { school: 'Maryville', game: 'LoL', ign: 'M', id: 'm' }];
+  const teams = [{ name: 'Winthrop', players: [P('a-ish', VIEW('a'))] }];
+  const before = JSON.stringify(teams);
+  const x = addCameraSheetPlayers(teams, rows, 'LoL');
+  assert.equal(JSON.stringify(teams), before);
+  assert.deepEqual(x.teamsForm[0].players, [P('a-ish', VIEW('a')), P('B', VIEW('b'), true)]);
+  assert.deepEqual(x.added, [{ team: 'Winthrop', ign: 'B', sub: true }]);
+  const many = Array.from({ length: 18 }, (_, i) => ({ school: 'W', game: 'LoL', ign: 'p' + i, id: 'id' + i }));
+  const y = addCameraSheetPlayers([{ name: 'W', players: [] }], many, 'LoL');
+  assert.equal(y.teamsForm[0].players.length, LIMITS.playersPerTeam);
+  assert.equal(y.over.length, 2);
+});
+
+test('C11 camerasFromCsv reads a Starter/Sub column', () => {
+  const r = camerasFromCsv('Game,Starter/Sub,IGN,Camera link\nLoL,Starter,A,a1\nLoL,Sub,B,b1');
+  assert.deepEqual(r.rows.map((x) => !!x.sub), [false, true]);
+});
+
+test('C12 camerasFromCsv keeps a blank-IGN row under the Name column', () => {
+  const r = camerasFromCsv('Game,Starter/Sub,Name,IGN,Camera link\nLoL,Starter,Jo Bloggs,,https://vdo.ninja/?push=x1&webcam\nLoL,Starter,,,x2');
+  assert.deepEqual(r.rows.map((x) => [x.ign, x.id]), [['Jo Bloggs', 'x1']]);
 });

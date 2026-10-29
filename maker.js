@@ -3,8 +3,8 @@ import {
   LIMITS, encodeMatch, buildMatchFromForm, cameraIdFromInput, isBlankPlayerRow,
   parseCsv, parseCsvHeader, csvMissingColumns, csvGames, csvSchools, csvTeamsForm,
   sheetIdFromInput, cachedSchoolsFor, gameLabel, rosterFromCsv, schoolsFromMasterRows, mergeTeamsKeepingLinks,
-  camerasFromSheets, applyCameraLinks,
-} from './logic.js?v=5';
+  camerasFromSheets, applyCameraLinks, addCameraSheetPlayers,
+} from './logic.js?v=6';
 
 const $ = (id) => document.getElementById(id);
 // Element builder. Text only ever goes in through textContent / attributes, never innerHTML.
@@ -216,7 +216,7 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
     if (r.error) throw new Error('noHeader');
     return r.rows;
   }
-  const camsText = (r) => `Cameras: ${r.filled} of ${r.wanted} filled${r.missing.length ? ` · ${r.missing.length} not in the camera sheet` : ''}`;
+  const camsText = (r, x) => `Cameras: ${r.filled} of ${r.wanted} filled${r.missing.length ? ` · ${r.missing.length} not in the camera sheet (${r.missing.map((m) => `${m.team}: ${m.ign}`).join(', ')})` : ''}${x && x.added.length ? ` · ${x.added.length} more added from the camera sheet (${x.added.map((a) => `${a.team}: ${a.ign}${a.sub ? ' (sub)' : ''}`).join(', ')})` : ''}${x && x.over.length ? ` · ${x.over.length} did not fit under ${LIMITS.playersPerTeam} players (${x.over.map((m) => `${m.team}: ${m.ign}`).join(', ')})` : ''}`;
   function d1ShowMaster() {
     const has = !!d1Master();
     $('d1-master-set').hidden = !has; $('d1-master-form').hidden = has;
@@ -302,7 +302,7 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
     let merged = teams.length ? mergeTeamsKeepingLinks(state.teams, teams) : null;
     let camText = '';
     if (merged && d1Cams()) {
-      try { const r = applyCameraLinks(merged, await d1FetchCams(), code); merged = r.teamsForm; camText = camsText(r); }
+      try { const rows = await d1FetchCams(); const r = applyCameraLinks(merged, rows, code); const x = addCameraSheetPlayers(r.teamsForm, rows, code); merged = x.teamsForm; camText = camsText(r, x); }
       catch { camText = "Rosters filled; couldn't read the camera sheet."; }
     }
     if (merged) {
@@ -334,10 +334,11 @@ export function initMaker({ form, badHashMessage, onUpdate }) {
       try { rows = await d1FetchCams(); } catch { d1Status("Couldn't read the camera sheet. Is it shared as 'Anyone with the link'?"); return; }
       const snapshot = { teams: structuredClone(state.teams), game: state.game };
       const r = applyCameraLinks(state.teams, rows, code);
-      if (r.wanted === 0) { d1Status('Every player already has a camera link, or there are no players yet.'); return; }
-      if (r.filled > 0) { state.teams = r.teamsForm; teamEdited(); renderTeams(); update(true); }
-      d1Status(camsText(r) + '.');
-      if (r.filled > 0) d1UndoButton(snapshot);
+      const x = addCameraSheetPlayers(r.teamsForm, rows, code);
+      if (r.filled === 0 && x.added.length === 0) { d1Status(r.wanted === 0 ? 'Every player already has a camera link, or there are no players yet.' : camsText(r, x) + '.'); return; }
+      state.teams = x.teamsForm; teamEdited(); renderTeams(); update(true);
+      d1Status(camsText(r, x) + '.');
+      d1UndoButton(snapshot);
     } finally { d1Busy(false); d1RenderSchools(); }
   }
   $('d1-save').addEventListener('click', () => {

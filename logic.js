@@ -467,6 +467,7 @@ const CAM_IGN_HEADS = ['ign', 'name', 'player', 'gamer tag', 'in-game name'];
 const CAM_LINK_HEADS = ['camera link', 'vdo link', 'vdo.ninja link', 'vdo ninja link', 'camera url', 'camera', 'cam', 'cam link'];
 const CAM_SCHOOL_HEADS = ['school name', 'school', 'team', 'team name', 'university'];
 const CAM_GAME_HEADS = ['game', 'title'];
+const CAM_ROLE_HEADS = ['starter/sub', 'starter / sub', 'role', 'starter or sub', 'status'];
 
 // Camera sheet CSV -> { rows: [{ school, game, ign, id }] } or { rows: [], error: 'noHeader' }.
 // The header is the first row with an IGN column and a link column (headers matched trimmed, any case; for IGN the
@@ -484,18 +485,21 @@ export function camerasFromCsv(text, opts = {}) {
     if (a >= 0 && b >= 0 && a !== b) { hi = i; head = h; ic = a; lc = b; }
   }
   if (hi < 0) return { rows: [], error: 'noHeader' };
-  const sc = find(head, CAM_SCHOOL_HEADS), gc = find(head, CAM_GAME_HEADS);
+  const sc = find(head, CAM_SCHOOL_HEADS), gc = find(head, CAM_GAME_HEADS), rc = find(head, CAM_ROLE_HEADS), nc = head.indexOf('name');
   const defSchool = typeof opts.defaultSchool === 'string' ? opts.defaultSchool.trim() : '';
   const defGame = opts.defaultGame === undefined ? null : opts.defaultGame;
   const out = [];
   for (const r of rows.slice(hi + 1)) {
-    const ign = (r[ic] ?? '').trim();
+    // A blank IGN with a camera link is still a link: it is kept under the player's real name (the Name column), else skipped.
+    const ign = (r[ic] ?? '').trim() || (nc >= 0 && nc !== lc ? (r[nc] ?? '').trim() : '');
     if (ign === '') continue;
     const cam = cameraIdFromSheetCell(r[lc] ?? '');
     if (!cam.id) continue;
     const school = (sc >= 0 ? (r[sc] ?? '').trim() : '') || defSchool;
     const game = (gc >= 0 ? normaliseGame(r[gc]) : null) || defGame;
-    out.push({ school, game, ign, id: cam.id });
+    const row = { school, game, ign, id: cam.id };
+    if (rc >= 0 && /^sub/i.test((r[rc] ?? '').trim())) row.sub = true;
+    out.push(row);
   }
   return { rows: out };
 }
@@ -525,7 +529,14 @@ export function schoolKey(name) {
 export function sameSchool(a, b) {
   const x = schoolKey(a), y = schoolKey(b);
   if (x === '' || y === '') return false;
-  return x === y || x.startsWith(y + ' ') || y.startsWith(x + ' ');
+  // "Grand View" and "Grandview" are the same school: compare with the spaces taken out too.
+  return x === y || x.startsWith(y + ' ') || y.startsWith(x + ' ') || x.replace(/ /g, '') === y.replace(/ /g, '');
+}
+
+// An IGN with case, accents, spaces, punctuation and a Riot "#TAG" suffix taken out. Used only after an exact (trimmed,
+// any case) match fails, so a roster "Veyron " or "Dancing With The Bl" still finds its camera row.
+export function ignKey(name) {
+  return txt(name).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').split('#')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 // Fills blank camera fields of a teams form from camera sheet rows. Does not change the input.
@@ -538,13 +549,22 @@ export function applyCameraLinks(teamsForm, camRows, gameCode) {
   const rows = (Array.isArray(camRows) ? camRows : []).filter((r) => r && (!r.game || r.game === gameCode));
   const noSchool = rows.filter((r) => !r.school);
   const out = { teamsForm: [], filled: 0, wanted: 0, missing: [] };
+  // Resolve one ign against a candidate row list: exact (trimmed, any case) first, then the tolerant key. null when none or ambiguous.
+  const pick = (cands, ign) => {
+    for (const same of [(r) => key(r.ign) === key(ign), (r) => ignKey(r.ign) !== '' && ignKey(r.ign) === ignKey(ign)]) {
+      const ids = new Set(cands.filter(same).map((r) => r.id));
+      if (ids.size === 1) return [...ids][0];
+      if (ids.size > 1) return null;
+    }
+    return null;
+  };
   for (const t of Array.isArray(teamsForm) ? teamsForm : []) {
+    const schoolRows = rows.filter((r) => r.school && sameSchool(t && t.name, r.school));
     const players = (Array.isArray(t && t.players) ? t.players : []).map((p) => {
       if (txt(p.link).trim() !== '' || key(p.ign) === '') return { ...p };
       out.wanted++;
-      const ids = new Set(rows.filter((r) => r.school && key(r.ign) === key(p.ign) && sameSchool(t.name, r.school)).map((r) => r.id));
-      let id = ids.size === 1 ? [...ids][0] : null;
-      if (ids.size === 0) {
+      let id = pick(schoolRows, p.ign);
+      if (!id && schoolRows.every((r) => key(r.ign) !== key(p.ign) && ignKey(r.ign) !== ignKey(p.ign))) {
         const bare = noSchool.filter((r) => key(r.ign) === key(p.ign));
         if (bare.length === 1) id = bare[0].id;
       }
@@ -552,6 +572,28 @@ export function applyCameraLinks(teamsForm, camRows, gameCode) {
       out.missing.push({ team: txt(t.name), ign: txt(p.ign).trim() });
       return { ...p };
     });
+    out.teamsForm.push({ ...t, players });
+  }
+  return out;
+}
+
+// Every camera-sheet player for each team's school and the game who is not in the team yet (matched by camera id, so a
+// player already there under a different spelling is not added twice) is added with their link, subs marked.
+// Does not change the input. Returns { teamsForm, added: [{ team, ign, sub }], over: [{ team, ign }] } where over = players
+// that did not fit under LIMITS.playersPerTeam.
+export function addCameraSheetPlayers(teamsForm, camRows, gameCode) {
+  const rows = (Array.isArray(camRows) ? camRows : []).filter((r) => r && r.school && (!r.game || r.game === gameCode));
+  const out = { teamsForm: [], added: [], over: [] };
+  for (const t of Array.isArray(teamsForm) ? teamsForm : []) {
+    const have = new Set((Array.isArray(t && t.players) ? t.players : []).map((p) => cameraIdFromInput(txt(p.link)).id).filter(Boolean));
+    const players = (Array.isArray(t && t.players) ? t.players : []).map((p) => ({ ...p }));
+    for (const r of rows) {
+      if (!sameSchool(t && t.name, r.school) || have.has(r.id)) continue;
+      have.add(r.id);
+      if (players.length >= LIMITS.playersPerTeam) { out.over.push({ team: txt(t.name), ign: r.ign }); continue; }
+      players.push({ ign: r.ign, link: cameraLinkForId(r.id), sub: r.sub === true });
+      out.added.push({ team: txt(t.name), ign: r.ign, sub: r.sub === true });
+    }
     out.teamsForm.push({ ...t, players });
   }
   return out;

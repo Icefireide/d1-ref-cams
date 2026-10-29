@@ -4,7 +4,7 @@ import {
   parseCsv, parseCsvHeader, csvMissingColumns, csvGames, csvSchools, csvTeamsForm,
   sheetIdFromInput, cachedSchoolsFor, gameLabel, rosterFromCsv, schoolsFromMasterRows, mergeTeamsKeepingLinks,
   camerasFromSheets, applyCameraLinks, addCameraSheetPlayers,
-} from './logic.js?v=6';
+} from './logic.js?v=7';
 
 const $ = (id) => document.getElementById(id);
 // Element builder. Text only ever goes in through textContent / attributes, never innerHTML.

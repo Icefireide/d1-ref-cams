@@ -1,5 +1,5 @@
-import { decodeHash, encodeMatch, formFromMatch, computeStatus, ignLabel, replyConnected, liveStatus, playerKey, defaultSelection, parseSelection, REPLY_TTL_MS, viewUrl } from './logic.js?v=6';
-import { initMaker, emptyForm } from './maker.js?v=6';
+import { decodeHash, encodeMatch, formFromMatch, computeStatus, ignLabel, replyConnected, liveStatus, playerKey, defaultSelection, parseSelection, REPLY_TTL_MS, viewUrl } from './logic.js?v=7';
+import { initMaker, emptyForm } from './maker.js?v=7';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
